@@ -48,71 +48,56 @@ def get_team_id(teamAbbr):
 
 
 def get_defensive_team_stats(team_id, season = "2024-25", season_type="Regular Season"):
-    # Get opponent stats (what the team allows to others)
-    opp_stats = leaguedashteamstats.LeagueDashTeamStats(
+    dashboard = teamdashboardbygeneralsplits.TeamDashboardByGeneralSplits(
+        team_id=team_id,
         season=season,
-        season_type_all_star=season_type,
-        measure_type_detailed_defense='Opponent'
-    ).get_data_frames()[0]
+        season_type_all_star=season_type
+    )
 
-    # Get advanced defensive rating
-    adv_stats = leaguedashteamstats.LeagueDashTeamStats(
-        season=season,
-        season_type_all_star=season_type,
-        measure_type_detailed_defense='Advanced'
-    ).get_data_frames()[0]
+    overall_df = dashboard.get_data_frames()[0]  
+    opp_df = dashboard.get_data_frames()[1]      
 
-    # Filter for team
-    opp_row = opp_stats[opp_stats['TEAM_ID'] == team_id]
-    adv_row = adv_stats[adv_stats['TEAM_ID'] == team_id]
+    def_rating = overall_df.iloc[0].get('DEF_RATING', None)
 
-    if opp_row.empty or adv_row.empty:
-        return None
+    defense_stats = opp_df[[
+        'GP', 'W', 'L', 'W_PCT',
+        'MIN', 'PTS', 'REB', 'AST', 'FG_PCT'
+    ]].copy()
 
-    # Build defense DataFrame
-    defense_df = pd.DataFrame({
-        'TEAM_ID': [team_id],
-        'GP': opp_row.iloc[0]['GP'],
-        'Opp_PTS': opp_row.iloc[0]['PTS'],
-        'Opp_REB': opp_row.iloc[0]['REB'],
-        'Opp_AST': opp_row.iloc[0]['AST'],
-        'Opp_FG_PCT': opp_row.iloc[0]['FG_PCT'],
-        'DEF_RATING': adv_row.iloc[0]['DEF_RATING']
-    })
+    defense_stats.rename(columns={
+        'PTS': 'Opp_PTS',
+        'REB': 'Opp_REB',
+        'AST': 'Opp_AST',
+        'FG_PCT': 'Opp_FG_PCT'
+    }, inplace=True)
 
-    return defense_df
+    defense_stats['DEF_RATING'] = def_rating
+
+    return defense_stats.reset_index(drop=True)
 
 def get_offensive_team_stats(team_id, season="2024-25", season_type="Regular Season"):
-    # Get base stats
-    base_stats = leaguedashteamstats.LeagueDashTeamStats(
+    dashboard = teamdashboardbygeneralsplits.TeamDashboardByGeneralSplits(
+        team_id=team_id,
         season=season,
-        season_type_all_star=season_type,
-        measure_type_detailed_defense='Base'
-    ).get_data_frames()[0]
+        season_type_all_star=season_type
+    )
 
-    # Get advanced stats
-    adv_stats = leaguedashteamstats.LeagueDashTeamStats(
-        season=season,
-        season_type_all_star=season_type,
-        measure_type_detailed_defense='Advanced'
-    ).get_data_frames()[0]
+    team_stats = dashboard.get_data_frames()[0]  # Team’s own stats
 
-    # Filter for team
-    base_row = base_stats[base_stats['TEAM_ID'] == team_id]
-    adv_row = adv_stats[adv_stats['TEAM_ID'] == team_id]
+    off_rating = team_stats.iloc[0].get('OFF_RATING', None)
 
-    if base_row.empty or adv_row.empty:
-        return None
+    offense_stats = team_stats[[
+        'GP', 'W', 'L', 'W_PCT',
+        'MIN', 'PTS', 'REB', 'AST', 'FG_PCT'
+    ]].copy()
 
-    # Build offense DataFrame
-    offense_df = pd.DataFrame({
-        'TEAM_ID': [team_id],
-        'GP': base_row.iloc[0]['GP'],
-        'PTS': base_row.iloc[0]['PTS'],
-        'REB': base_row.iloc[0]['REB'],
-        'AST': base_row.iloc[0]['AST'],
-        'FG_PCT': base_row.iloc[0]['FG_PCT'],
-        'OFF_RATING': adv_row.iloc[0]['OFF_RATING']
-    })
+    offense_stats.rename(columns={
+        'PTS': 'Team_PTS',
+        'REB': 'Team_REB',
+        'AST': 'Team_AST',
+        'FG_PCT': 'Team_FG_PCT'
+    }, inplace=True)
 
-    return offense_df
+    offense_stats['OFF_RATING'] = off_rating
+
+    return offense_stats.reset_index(drop=True)
