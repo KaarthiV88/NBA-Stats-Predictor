@@ -3,6 +3,8 @@ import numpy
 import pandas as pd
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog as pgl
+from nba_api.stats.endpoints import teamdashboardbygeneralsplits
+from nba_api.stats.static import teams
 
 def get_player_id(playerName):
     all_players = players.get_players()
@@ -13,7 +15,7 @@ def get_player_id(playerName):
         
     return ValueError(playerName, "not found!")
 
-def get_head_to_head_stats(player_id, opponent_abbreviation, seasons=['2023-2024', '2024-2025'], season_type='Regular Season'):
+def get_head_to_head_stats(player_id, opponent_abbreviation, seasons=['2023-2024', '2024-2025'], season_type="Regular Season"):
     all_games = []
         
     for season in seasons:
@@ -35,3 +37,11 @@ def get_head_to_head_stats(player_id, opponent_abbreviation, seasons=['2023-2024
         return combined
     else:
         return pd.DataFrame() 
+
+def get_team_id(teamAbbr):
+    team = teams.find_team_by_abbreviation(teamAbbr)
+    if(team):
+        return team['id']
+    else:
+        return ValueError(teamAbbr, "team could not be found. Search up the official team abbreviation and try again!")
+    
