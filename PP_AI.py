@@ -40,6 +40,6 @@ oppDef = bc.get_defensive_team_stats(opposingTeam_ABBR)
 oppOff = bc.get_offensive_team_stats(opposingTeam_ABBR)
 
 print()
-print(oppDef[['GP', 'PTS', 'REB', 'AST', 'FG_PCT', 'DEF_RATING']])
+print(oppDef[['GP', 'Opp_PTS', 'Opp_REB', 'Opp_AST', 'Opp_FG_PCT', 'DEF_RATING']])
 print()
 print(oppOff)
