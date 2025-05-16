@@ -1,4 +1,8 @@
-nba_api
-pandas
-tabulate //optional
- 
+import nba_api
+import numpy
+import pandas as pd
+import tabulate #Haven't decided use cases yet
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import playergamelog as pgl
+from nba_api.stats.endpoints import teamdashboardbygeneralsplits
+from nba_api.stats.static import teams
