@@ -33,48 +33,53 @@ category_type = "offensive" if category in offensive_categories else "defensive"
 offensive_stats = ["PTS", "REB", "AST"]
 defensive_stats = ["BLK", "STL"]
 
-# Get player and team IDs
-player_id = bc.get_player_id(player_name)
-opponent_abbr = opposing_team.upper()
-season_type = "Regular Season" if season_type_input == 1 else "Playoffs"
+try:
+    # Get player and team IDs
+    player_id = bc.get_player_id(player_name)
+    opponent_abbr = opposing_team.upper()
+    season_type = "Regular Season" if season_type_input == 1 else "Playoffs"
 
-# Fetch player head-to-head stats
-player_h2h_stats = bc.get_head_to_head_stats(player_id, opponent_abbr, seasons=["2023-24", "2024-25"], season_type=season_type)
-if not player_h2h_stats.empty:
-    print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Head-to-Head Stats vs {opponent_abbr}:")
-    relevant_stats = offensive_stats if category_type == "offensive" else defensive_stats
-    display_cols = ["SEASON", "GAME_DATE", "MATCHUP"] + [col for col in relevant_stats if col in player_h2h_stats.columns]
-    print(player_h2h_stats[display_cols])
+    # Fetch player head-to-head stats
+    player_h2h_stats = bc.get_head_to_head_stats(player_id, opponent_abbr, seasons=["2023-24", "2024-25"], season_type=season_type)
+    if not player_h2h_stats.empty:
+        print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Head-to-Head Stats vs {opponent_abbr}:")
+        relevant_stats = offensive_stats if category_type == "offensive" else defensive_stats
+        display_cols = ["SEASON", "GAME_DATE", "MATCHUP"] + [col for col in relevant_stats if col in player_h2h_stats.columns]
+        print(player_h2h_stats[display_cols])
 
-# Fetch opposing team stats
-opp_team_id = bc.get_team_id(opponent_abbr)
-measure_type = "Defense" if category_type == "offensive" else "Base"
-opp_stats = bc.get_team_stats(opp_team_id, season="2023-24", season_type=season_type, measure_type=measure_type)
-if not opp_stats.empty:
-    print(f"\nOpposing Team ({opponent_abbr}) {'Defensive' if category_type == 'offensive' else 'Offensive'} Stats:")
-    # Use available columns to avoid index errors
-    relevant_opp_stats = ["PTS", "REB", "AST", "FG_PCT", "DEF_RATING"] if category_type == "offensive" else ["PTS", "REB", "AST", "FG_PCT"]
-    available_cols = [col for col in ["TEAM_NAME", "GP"] + relevant_opp_stats if col in opp_stats.columns]
-    print(opp_stats[available_cols])
+    # Fetch opposing team stats
+    opp_team_id = bc.get_team_id(opponent_abbr)
+    measure_type = "Defense" if category_type == "offensive" else "Base"
+    opp_stats = bc.get_team_stats(opp_team_id, season="2023-24", season_type=season_type, measure_type=measure_type)
+    if not opp_stats.empty:
+        print(f"\nOpposing Team ({opponent_abbr}) {'Defensive' if category_type == 'offensive' else 'Offensive'} Stats:")
+        relevant_opp_stats = ["OPP_PTS", "OPP_REB", "OPP_AST", "FG_PCT", "DEF_RATING"] if category_type == "offensive" else ["PTS", "REB", "AST", "FG_PCT"]
+        available_cols = [col for col in ["TEAM_NAME", "GP"] + relevant_opp_stats if col in opp_stats.columns]
+        print(opp_stats[available_cols])
 
-# Fetch player averages
-averages = bc.get_player_season_recent_averages(player_id, season="2023-24", season_type=season_type)
-if not averages["season_averages"].empty:
-    print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Season Averages:")
-    relevant_avg_stats = offensive_stats if category_type == "offensive" else defensive_stats
-    print(averages["season_averages"][relevant_avg_stats])
-if not averages["recent_averages"].empty:
-    print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Last 10 Games Averages:")
-    print(averages["recent_averages"][relevant_avg_stats])
+    # Fetch player averages
+    averages = bc.get_player_season_recent_averages(player_id, season="2023-24", season_type=season_type)
+    if not averages["season_averages"].empty:
+        print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Season Averages:")
+        relevant_avg_stats = offensive_stats if category_type == 'offensive' else defensive_stats
+        print(averages["season_averages"][relevant_avg_stats])
+    if not averages["recent_averages"].empty:
+        print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Last 10 Games Averages:")
+        print(averages["recent_averages"][relevant_avg_stats])
 
-# Make prediction
-predictor = AdvancedNBAPlayerPredictor()
-result = predictor.predict_over_under(
-    player_id=player_id,
-    category=category,
-    opponent_abbr=opponent_abbr,
-    season_type=season_type,
-    betting_line=betting_line
-)
-print("\nBet Prediction:")
-print(result["message"])
+    # Make prediction
+    predictor = AdvancedNBAPlayerPredictor()
+    result = predictor.predict_over_under(
+        player_id=player_id,
+        category=category,
+        opponent_abbr=opponent_abbr,
+        season_type=season_type,
+        betting_line=betting_line
+    )
+    print("\nBet Prediction:")
+    print(result["message"])
+
+except ValueError as e:
+    print(f"ValueError: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
