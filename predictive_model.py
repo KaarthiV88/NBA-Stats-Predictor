@@ -35,15 +35,22 @@ class AdvancedNBAPlayerPredictor:
                 df = gamelog.get_data_frames()[0]
                 df['SEASON'] = season
                 game_logs.append(df)
-            except:
+            except Exception as e:
+                print(f"Error fetching game logs for season {season}: {e}")
                 continue
         if not game_logs:
-            raise ValueError(f"No game logs found for player ID {player_id} in specified seasons.")
+            print(f"No game logs found for player ID {player_id} in specified seasons.")
+            # Return empty DataFrame with required columns
+            return pd.DataFrame(columns=['GAME_DATE', 'MATCHUP', 'SEASON'] + self.stat_categories)
         all_games = pd.concat(game_logs).reset_index(drop=True)
         all_games['GAME_DATE'] = pd.to_datetime(all_games['GAME_DATE']).dt.date
         current_date = datetime.now().date()
         all_games['days_ago'] = (current_date - all_games['GAME_DATE']).apply(lambda x: x.days)
         all_games['OPPONENT'] = all_games['MATCHUP'].apply(lambda x: x.split(' vs. ')[1] if ' vs. ' in x else x.split(' @ ')[1])
+        # Ensure all stat columns exist
+        for stat in self.stat_categories:
+            if stat not in all_games.columns:
+                all_games[stat] = 0.0
         return all_games
 
     def create_features(self, all_games, opponent_abbr, season_type):
@@ -56,11 +63,16 @@ class AdvancedNBAPlayerPredictor:
         lambda_ = -np.log(0.5) / 30
         all_games['recency_weight'] = np.exp(-lambda_ * all_games['days_ago'])
 
-        opp_team_id = bc.get_team_id(opponent_abbr)
-        opp_def_stats = bc.get_defensive_team_stats(opp_team_id, all_games['SEASON'].iloc[-1], season_type)
-        opp_def_stats = opp_def_stats.iloc[0] if not opp_def_stats.empty else pd.Series()
-        league_avgs = bc.get_league_defensive_averages(all_games['SEASON'].iloc[-1], season_type)
-        
+        try:
+            opp_team_id = bc.get_team_id(opponent_abbr)
+            opp_def_stats = bc.get_defensive_team_stats(opp_team_id, all_games['SEASON'].iloc[-1] if not all_games.empty else '2023-24', season_type)
+            opp_def_stats = opp_def_stats.iloc[0] if isinstance(opp_def_stats, pd.DataFrame) and not opp_def_stats.empty else opp_def_stats
+            league_avgs = bc.get_league_defensive_averages(all_games['SEASON'].iloc[-1] if not all_games.empty else '2023-24', season_type)
+        except Exception as e:
+            print(f"Error fetching opponent stats: {e}")
+            opp_def_stats = pd.Series({f'OPP_{stat}': 100.0 for stat in self.stat_categories})
+            league_avgs = pd.Series({f'OPP_{stat}': 100.0 for stat in self.stat_categories})
+
         opponent_strengths = {}
         for stat in self.stat_categories:
             allowed_stat = f'OPP_{stat}'
@@ -84,76 +96,91 @@ class AdvancedNBAPlayerPredictor:
 
         X = all_games[self.feature_cols].fillna(0)
         y = all_games[self.stat_categories].fillna(0)
+        # Convert y to NumPy array to ensure correct shape
+        y = y.values
+        if y.shape[1] != len(self.stat_categories):
+            raise ValueError(f"Target array has incorrect number of columns: {y.shape[1]} vs {len(self.stat_categories)}")
         return X, y, opponent_strengths
 
     def train_model(self, X, y):
         """
         Trains the Random Forest Regressor model using PCA-transformed features.
         """
-        X_scaled = self.scaler.fit_transform(X)
-        X_pca = self.pca.fit_transform(X_scaled)
-        self.regressor = RandomForestRegressor(n_estimators=100, random_state=42)
-        self.regressor.fit(X_pca, y)
+        try:
+            X_scaled = self.scaler.fit_transform(X)
+            X_pca = self.pca.fit_transform(X_scaled)
+            self.regressor = RandomForestRegressor(n_estimators=100, random_state=42)
+            self.regressor.fit(X_pca, y)
+        except Exception as e:
+            raise ValueError(f"Error training model: {e}")
 
     def predict_performance(self, features, category):
         """
         Predicts the player's performance for a given category (single or combined).
         """
-        features_scaled = self.scaler.transform(features)
-        features_pca = self.pca.transform(features_scaled)
-        pred_stats = self.regressor.predict(features_pca)[0]
-        pred_dict = dict(zip(self.stat_categories, pred_stats))
+        try:
+            features_scaled = self.scaler.transform(features)
+            features_pca = self.pca.transform(features_scaled)
+            pred_stats = self.regressor.predict(features_pca)[0]
+            pred_dict = dict(zip(self.stat_categories, pred_stats))
 
-        if '+' not in category:
-            mapped_category = self.stat_mapping.get(category.upper(), category.upper())
-            if mapped_category not in self.stat_categories:
-                raise ValueError(f"Category '{category}' not supported.")
-            pred = pred_dict[mapped_category]
-            stat_idx = self.stat_categories.index(mapped_category)
-            residuals = self.regressor.predict(self.pca.transform(self.scaler.transform(self.X_train)))[:, stat_idx] - self.y_train[:, stat_idx]
-            sigma = np.std(residuals) if np.std(residuals) > 0 else 1.0
-        else:
-            stats_needed = [self.stat_mapping.get(stat.strip().upper(), stat.strip().upper()) for stat in category.split('+')]
-            if not all(stat in self.stat_categories for stat in stats_needed):
-                raise ValueError(f"One or more stats in '{category}' not supported.")
-            pred = sum(pred_dict[stat] for stat in stats_needed)
-            residuals = self.regressor.predict(self.pca.transform(self.scaler.transform(self.X_train))) - self.y_train
-            cov_matrix = np.cov(residuals, rowvar=False)
-            indices = [self.stat_categories.index(stat) for stat in stats_needed]
-            var_sum = sum(cov_matrix[i, j] for i in indices for j in indices)
-            sigma = np.sqrt(var_sum) if var_sum > 0 else 1.0
+            if '+' not in category:
+                mapped_category = self.stat_mapping.get(category.upper(), category.upper())
+                if mapped_category not in self.stat_categories:
+                    raise ValueError(f"Category '{category}' not supported.")
+                pred = pred_dict[mapped_category]
+                stat_idx = self.stat_categories.index(mapped_category)
+                residuals = self.regressor.predict(self.pca.transform(self.scaler.transform(self.X_train)))[:, stat_idx] - self.y_train[:, stat_idx]
+                sigma = np.std(residuals) if np.std(residuals) > 0 else 1.0
+            else:
+                stats_needed = [self.stat_mapping.get(stat.strip().upper(), stat.strip().upper()) for stat in category.split('+')]
+                if not all(stat in self.stat_categories for stat in stats_needed):
+                    raise ValueError(f"One or more stats in '{category}' not supported.")
+                pred = sum(pred_dict[stat] for stat in stats_needed)
+                residuals = self.regressor.predict(self.pca.transform(self.scaler.transform(self.X_train))) - self.y_train
+                cov_matrix = np.cov(residuals, rowvar=False)
+                indices = [self.stat_categories.index(stat) for stat in stats_needed]
+                var_sum = sum(cov_matrix[i, j] for i in indices for j in indices)
+                sigma = np.sqrt(var_sum) if var_sum > 0 else 1.0
 
-        ci_lower, ci_upper = norm.interval(0.95, loc=pred, scale=sigma)
-        return pred, sigma, (ci_lower, ci_upper)
+            ci_lower, ci_upper = norm.interval(0.95, loc=pred, scale=sigma)
+            return pred, sigma, (ci_lower, ci_upper)
+        except Exception as e:
+            raise ValueError(f"Error predicting performance: {e}")
 
     def predict_over_under(self, player_id, category, opponent_abbr, season_type, betting_line, seasons=['2023-24', '2024-25']):
         """
         Predicts the over/under bet outcome for the player's performance.
         """
-        all_games = self.prepare_data(player_id, seasons, season_type)
-        X, y, opponent_strengths = self.create_features(all_games, opponent_abbr, season_type)
-        
-        self.X_train, _, self.y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
-        self.train_model(self.X_train, self.y_train)
+        try:
+            all_games = self.prepare_data(player_id, seasons, season_type)
+            if all_games.empty:
+                raise ValueError("No game data available to make prediction.")
+            X, y, opponent_strengths = self.create_features(all_games, opponent_abbr, season_type)
+            
+            self.X_train, _, self.y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+            self.train_model(self.X_train, self.y_train)
 
-        recent_means = {f'recent_form_{stat}': y[stat].rolling(window=5, min_periods=1).mean().iloc[-1] for stat in self.stat_categories}
-        upcoming_features = pd.DataFrame({
-            'recency_weight': [1.0],
-            'same_opponent': [1],
-            'is_playoff': [1 if season_type == 'Playoffs' else 0],
-            **{f'weighted_{stat}': [y[stat].mean()] for stat in self.stat_categories},
-            **{f'opp_strength_{stat}': [opponent_strengths[stat]] for stat in self.stat_categories},
-            **{f'opp_interaction_{stat}': [1 * opponent_strengths[stat]] for stat in self.stat_categories},
-            **recent_means
-        }, index=[0])[self.feature_cols].fillna(0)
+            recent_means = {f'recent_form_{stat}': y[:, self.stat_categories.index(stat)].ravel()[-5:].mean() for stat in self.stat_categories}
+            upcoming_features = pd.DataFrame({
+                'recency_weight': [1.0],
+                'same_opponent': [1],
+                'is_playoff': [1 if season_type == 'Playoffs' else 0],
+                **{f'weighted_{stat}': [y[:, self.stat_categories.index(stat)].mean()] for stat in self.stat_categories},
+                **{f'opp_strength_{stat}': [opponent_strengths[stat]] for stat in self.stat_categories},
+                **{f'opp_interaction_{stat}': [1 * opponent_strengths[stat]] for stat in self.stat_categories},
+                **recent_means
+            }, index=[0])[self.feature_cols].fillna(0)
 
-        pred, sigma, ci = self.predict_performance(upcoming_features, category)
+            pred, sigma, ci = self.predict_performance(upcoming_features, category)
 
-        p_over = 1 - norm.cdf(betting_line, pred, sigma)
-        confidence = p_over if p_over > 0.5 else 1 - p_over
-        bet_on = 'over' if p_over > 0.5 else 'under'
+            p_over = 1 - norm.cdf(betting_line, pred, sigma)
+            confidence = p_over if p_over > 0.5 else 1 - p_over
+            bet_on = 'over' if p_over > 0.5 else 'under'
 
-        message = (f"Predicted {category}: {pred:.1f} (95% CI: {ci[0]:.1f}-{ci[1]:.1f})\n"
-                   f"P(Over {betting_line}): {p_over*100:.1f}%\n"
-                   f"{confidence*100:.1f}% confident bet on {bet_on.upper()}")
-        return {'bet_on': bet_on, 'confidence': confidence, 'message': message}
+            message = (f"Predicted {category}: {pred:.1f} (95% CI: {ci[0]:.1f}-{ci[1]:.1f})\n"
+                       f"P(Over {betting_line}): {p_over*100:.1f}%\n"
+                       f"{confidence*100:.1f}% confident bet on {bet_on.upper()}")
+            return {'bet_on': bet_on, 'confidence': confidence, 'message': message}
+        except Exception as e:
+            raise ValueError(f"Error in predict_over_under: {e}")
