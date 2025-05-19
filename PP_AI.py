@@ -61,7 +61,7 @@ try:
     averages = bc.get_player_season_recent_averages(player_id, season="2023-24", season_type=season_type)
     if not averages["season_averages"].empty:
         print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Season Averages:")
-        relevant_avg_stats = offensive_stats if category_type == 'offensive' else defensive_stats
+        relevant_avg_stats = offensive_stats if category_type == "offensive" else defensive_stats
         print(averages["season_averages"][relevant_avg_stats])
     if not averages["recent_averages"].empty:
         print(f"\nPlayer {'Offensive' if category_type == 'offensive' else 'Defensive'} Last 10 Games Averages:")
@@ -74,7 +74,8 @@ try:
         category=category,
         opponent_abbr=opponent_abbr,
         season_type=season_type,
-        betting_line=betting_line
+        betting_line=betting_line,
+        category_type=category_type
     )
     print("\nBet Prediction:")
     print(result["message"])
