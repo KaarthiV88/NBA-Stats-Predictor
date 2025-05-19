@@ -1,6 +1,6 @@
 import pandas as pd
 from nba_api.stats.static import players, teams
-from nba_api.stats.endpoints import playergamelog, leaguedashteamstats
+from nba_api.stats.endpoints import playergamelog, leaguedashteamstats, teamgamelog
 import time
 import json
 
@@ -71,7 +71,6 @@ def get_defensive_team_stats(team_id, season='2023-24', season_type='Regular Sea
         team_df = df[df['TEAM_ID'] == team_id]
         if team_df.empty:
             print(f"No defensive stats found for team ID {team_id} in season {season}, {season_type}")
-            # Return default Series with placeholder values
             return pd.Series({
                 'TEAM_ID': team_id,
                 'OPP_PTS': 100.0,
@@ -85,7 +84,6 @@ def get_defensive_team_stats(team_id, season='2023-24', season_type='Regular Sea
         return team_df
     except Exception as e:
         print(f"Error fetching defensive stats for team ID {team_id}: {e}")
-        # Return default Series with placeholder values
         return pd.Series({
             'TEAM_ID': team_id,
             'OPP_PTS': 100.0,
@@ -111,7 +109,6 @@ def get_offensive_team_stats(team_id, season='2023-24', season_type='Regular Sea
         team_df = df[df['TEAM_ID'] == team_id]
         if team_df.empty:
             print(f"No offensive stats found for team ID {team_id} in season {season}, {season_type}")
-            # Return default Series with placeholder values
             return pd.Series({
                 'TEAM_ID': team_id,
                 'PTS': 100.0,
@@ -124,7 +121,6 @@ def get_offensive_team_stats(team_id, season='2023-24', season_type='Regular Sea
         return team_df
     except Exception as e:
         print(f"Error fetching offensive stats for team ID {team_id}: {e}")
-        # Return default Series with placeholder values
         return pd.Series({
             'TEAM_ID': team_id,
             'PTS': 100.0,
@@ -146,7 +142,6 @@ def get_team_stats(team_id, season='2023-24', season_type='Regular Season', meas
             return get_offensive_team_stats(team_id, season, season_type)
     except Exception as e:
         print(f"Error fetching team stats for team ID {team_id}, measure_type {measure_type}: {e}")
-        # Return default Series based on measure_type
         if measure_type == 'Defense':
             return pd.Series({
                 'TEAM_ID': team_id,
@@ -168,6 +163,52 @@ def get_team_stats(team_id, season='2023-24', season_type='Regular Season', meas
                 'STL': 7.0,
                 'FG_PCT': 0.45
             })
+
+def get_team_recent_stats(team_id, season='2024-25', season_type='Regular Season', measure_type='Defense', num_games=10):
+    """
+    Fetches the last num_games game logs for a team, with offensive or defensive stats.
+    """
+    try:
+        gamelog = teamgamelog.TeamGameLog(team_id=team_id, season=season, season_type_all_star=season_type)
+        df = gamelog.get_data_frames()[0]
+        if df.empty:
+            print(f"No game logs found for team ID {team_id} in season {season}, {season_type}")
+            return pd.Series({
+                'TEAM_ID': team_id,
+                'OPP_PTS' if measure_type == 'Defense' else 'PTS': 100.0,
+                'OPP_REB' if measure_type == 'Defense' else 'REB': 40.0,
+                'OPP_AST' if measure_type == 'Defense' else 'AST': 20.0,
+                'OPP_BLK' if measure_type == 'Defense' else 'BLK': 5.0,
+                'OPP_STL' if measure_type == 'Defense' else 'STL': 7.0,
+                'FG_PCT': 0.45,
+                'WIN_PCT': 0.5
+            })
+        # Take the last num_games and create a copy
+        recent_games = df.head(num_games).copy()
+        # Calculate win percentage
+        recent_games['WIN'] = recent_games['WL'].apply(lambda x: 1 if x == 'W' else 0)
+        win_pct = recent_games['WIN'].mean()
+        # Select relevant stats
+        stat_prefix = 'OPP_' if measure_type == 'Defense' else ''
+        relevant_stats = [f'{stat_prefix}{stat}' for stat in ['PTS', 'REB', 'AST', 'BLK', 'STL']] + ['FG_PCT']
+        available_stats = [col for col in relevant_stats if col in recent_games.columns]
+        # Compute averages
+        averages = recent_games[available_stats].mean()
+        averages['WIN_PCT'] = win_pct
+        averages['TEAM_ID'] = team_id
+        return averages
+    except Exception as e:
+        print(f"Error fetching recent team stats for team ID {team_id}: {e}")
+        return pd.Series({
+            'TEAM_ID': team_id,
+            'OPP_PTS' if measure_type == 'Defense' else 'PTS': 100.0,
+            'OPP_REB' if measure_type == 'Defense' else 'REB': 40.0,
+            'OPP_AST' if measure_type == 'Defense' else 'AST': 20.0,
+            'OPP_BLK' if measure_type == 'Defense' else 'BLK': 5.0,
+            'OPP_STL' if measure_type == 'Defense' else 'STL': 7.0,
+            'FG_PCT': 0.45,
+            'WIN_PCT': 0.5
+        })
 
 def get_league_defensive_averages(season='2023-24', season_type='Regular Season'):
     """
