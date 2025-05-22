@@ -1,8 +1,16 @@
 import nba_api
-import numpy
 import pandas as pd
-import tabulate #Haven't decided use cases yet
-from nba_api.stats.static import players
-from nba_api.stats.endpoints import playergamelog as pgl
-from nba_api.stats.endpoints import teamdashboardbygeneralsplits
-from nba_api.stats.static import teams
+from nba_api.stats.static import players, teams
+from nba_api.stats.endpoints import playergamelog, leaguedashteamstats, teamgamelog, PlayerDashboardByGeneralSplits, playerdashboardbygamesplits
+import time
+import json
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from xgboost import XGBRegressor
+from scipy.stats import norm, linregress
+from nba_api.stats.endpoints import playergamelog
