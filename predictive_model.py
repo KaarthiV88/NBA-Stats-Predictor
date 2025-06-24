@@ -1,12 +1,11 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from xgboost import XGBRegressor
-from scipy.stats import norm, linregress
+from scipy.stats import norm
 from nba_api.stats.endpoints import playergamelog
 import bet_calculations as bc
 import logging
@@ -17,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 class AdvancedNBAPlayerPredictor:
     def __init__(self, n_components=0.95):
-        self.rf_regressor = None
-        self.xgb_regressor = None
+        self.rf_regressors = {}  # Dictionary to store one RF model per stat
+        self.gbr_regressors = {}  # Dictionary to store one GBR model per stat
         self.scaler = StandardScaler()
         self.pca = PCA(n_components=n_components)
         self.stat_categories = ['PTS', 'REB', 'AST', 'BLK', 'STL']
         self.feature_cols = None
-        self.ensemble_weight_rf = 0.5
+        self.ensemble_weights_rf = {}  # Dictionary to store RF weight per stat
         self.stat_mapping = {
             'POINTS': 'PTS',
             'REBOUNDS': 'REB',
@@ -171,53 +170,56 @@ class AdvancedNBAPlayerPredictor:
             X_scaled = self.scaler.fit_transform(X)
             X_pca = self.pca.fit_transform(X_scaled)
 
-            # Hyperparameter tuning for RandomForest
-            rf_param_grid = {
-                'n_estimators': [50, 100, 200],
-                'max_depth': [5, 10, 15],
-                'min_samples_split': [2, 5]
-            }
-            rf = GridSearchCV(
-                RandomForestRegressor(random_state=42),
-                rf_param_grid,
-                cv=3,
-                scoring='neg_mean_squared_error',
-                n_jobs=-1
-            )
-            rf.fit(X_pca, y)
-            self.rf_regressor = rf.best_estimator_
-            logger.debug(f"Best RF params: {rf.best_params_}")
+            for stat_idx, stat in enumerate(self.stat_categories):
+                y_stat = y[:, stat_idx]
 
-            # Hyperparameter tuning for XGBoost
-            xgb_param_grid = {
-                'n_estimators': [50, 100, 200],
-                'max_depth': [3, 6, 9],
-                'learning_rate': [0.01, 0.1, 0.3]
-            }
-            xgb = GridSearchCV(
-                XGBRegressor(random_state=42, objective='reg:squarederror'),
-                xgb_param_grid,
-                cv=3,
-                scoring='neg_mean_squared_error',
-                n_jobs=-1
-            )
-            xgb.fit(X_pca, y)
-            self.xgb_regressor = xgb.best_estimator_
-            logger.debug(f"Best XGB params: {xgb.best_params_}")
+                # Hyperparameter tuning for RandomForest
+                rf_param_grid = {
+                    'n_estimators': [50, 100, 200],
+                    'max_depth': [5, 10, 15],
+                    'min_samples_split': [2, 5]
+                }
+                rf = GridSearchCV(
+                    RandomForestRegressor(random_state=42),
+                    rf_param_grid,
+                    cv=3,
+                    scoring='neg_mean_squared_error',
+                    n_jobs=-1
+                )
+                rf.fit(X_pca, y_stat)
+                self.rf_regressors[stat] = rf.best_estimator_
+                logger.debug(f"Best RF params for {stat}: {rf.best_params_}")
 
-            # Optimize ensemble weights
-            rf_preds = self.rf_regressor.predict(X_pca)
-            xgb_preds = self.xgb_regressor.predict(X_pca)
-            best_weight = 0.5
-            best_mse = float('inf')
-            for w in np.linspace(0, 1, 21):  # Finer grid
-                ensemble_preds = w * rf_preds + (1 - w) * xgb_preds
-                mse = np.mean((ensemble_preds - y) ** 2)
-                if mse < best_mse:
-                    best_mse = mse
-                    best_weight = w
-            self.ensemble_weight_rf = best_weight
-            logger.debug(f"Ensemble weight RF: {best_weight}")
+                # Hyperparameter tuning for GradientBoosting
+                gbr_param_grid = {
+                    'n_estimators': [50, 100, 200],
+                    'max_depth': [3, 5, 7],
+                    'learning_rate': [0.01, 0.05, 0.1]
+                }
+                gbr = GridSearchCV(
+                    GradientBoostingRegressor(random_state=42),
+                    gbr_param_grid,
+                    cv=3,
+                    scoring='neg_mean_squared_error',
+                    n_jobs=-1
+                )
+                gbr.fit(X_pca, y_stat)
+                self.gbr_regressors[stat] = gbr.best_estimator_
+                logger.debug(f"Best GBR params for {stat}: {gbr.best_params_}")
+
+                # Optimize ensemble weights
+                rf_preds = self.rf_regressors[stat].predict(X_pca)
+                gbr_preds = self.gbr_regressors[stat].predict(X_pca)
+                best_weight = 0.5
+                best_mse = float('inf')
+                for w in np.linspace(0, 1, 21):  # Finer grid
+                    ensemble_preds = w * rf_preds + (1 - w) * gbr_preds
+                    mse = np.mean((ensemble_preds - y_stat) ** 2)
+                    if mse < best_mse:
+                        best_mse = mse
+                        best_weight = w
+                self.ensemble_weights_rf[stat] = best_weight
+                logger.debug(f"Ensemble weight RF for {stat}: {best_weight}")
         except Exception as e:
             raise ValueError(f"Error training model: {e}")
 
@@ -225,10 +227,6 @@ class AdvancedNBAPlayerPredictor:
         try:
             features_scaled = self.scaler.transform(features)
             features_pca = self.pca.transform(features_scaled)
-            rf_preds = self.rf_regressor.predict(features_pca)[0]
-            xgb_preds = self.xgb_regressor.predict(features_pca)[0]
-            pred_stats = self.ensemble_weight_rf * rf_preds + (1 - self.ensemble_weight_rf) * xgb_preds
-            pred_dict = dict(zip(self.stat_categories, pred_stats))
 
             stats_needed = self.stat_mapping.get(category.upper(), [category.upper()])
             if isinstance(stats_needed, str):
@@ -236,7 +234,16 @@ class AdvancedNBAPlayerPredictor:
             if not all(stat in self.stat_categories for stat in stats_needed):
                 raise ValueError(f"One or more stats in '{category}' not supported")
 
-            model_pred = sum(pred_dict[stat] for stat in stats_needed)
+            model_pred = 0.0
+            pred_stats = {}
+            for stat in self.stat_categories:
+                rf_pred = self.rf_regressors[stat].predict(features_pca)[0]
+                gbr_pred = self.gbr_regressors[stat].predict(features_pca)[0]
+                ensemble_pred = self.ensemble_weights_rf[stat] * rf_pred + (1 - self.ensemble_weights_rf[stat]) * gbr_pred
+                pred_stats[stat] = ensemble_pred
+                if stat in stats_needed:
+                    model_pred += ensemble_pred
+
             season_avg = sum(season_avgs.get(stat, 0.0) for stat in stats_needed)
             recent_avg = sum(recent_avgs.get(stat, 0.0) for stat in stats_needed)
             h2h_avg = sum(h2h_avgs.get(stat, 0.0) for stat in stats_needed)
@@ -246,13 +253,16 @@ class AdvancedNBAPlayerPredictor:
             prior_pred = (0.4 * season_avg + 0.3 * recent_avg + h2h_weight * h2h_avg + 0.1 * other_factors)
             pred = 0.6 * model_pred + 0.4 * prior_pred
 
-            rf_train_preds = self.rf_regressor.predict(self.pca.transform(self.scaler.transform(self.X_train)))
-            xgb_train_preds = self.xgb_regressor.predict(self.pca.transform(self.scaler.transform(self.X_train)))
-            ensemble_train_preds = self.ensemble_weight_rf * rf_train_preds + (1 - self.ensemble_weight_rf) * xgb_train_preds
-            residuals = sum(
-                ensemble_train_preds[:, self.stat_categories.index(stat)] - self.y_train[:, self.stat_categories.index(stat)]
-                for stat in stats_needed
-            )
+            residuals = []
+            X_train_scaled = self.scaler.transform(self.X_train)
+            X_train_pca = self.pca.transform(X_train_scaled)
+            for stat in stats_needed:
+                stat_idx = self.stat_categories.index(stat)
+                rf_train_preds = self.rf_regressors[stat].predict(X_train_pca)
+                gbr_train_preds = self.gbr_regressors[stat].predict(X_train_pca)
+                ensemble_train_preds = self.ensemble_weights_rf[stat] * rf_train_preds + (1 - self.ensemble_weights_rf[stat]) * gbr_train_preds
+                residuals.append(ensemble_train_preds - self.y_train[:, stat_idx])
+            residuals = np.sum(residuals, axis=0)
             sigma = np.std(residuals) if np.std(residuals) > 0 else 1.0
 
             stat_variances = [
