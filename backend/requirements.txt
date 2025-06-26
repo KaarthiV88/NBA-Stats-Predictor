@@ -1,17 +1,7 @@
-import nba_api
-import pandas as pd
-from nba_api.stats.static import players, teams
-from nba_api.stats.endpoints import playergamelog, leaguedashteamstats, teamgamelog, PlayerDashboardByGeneralSplits, playerdashboardbygamesplits
-import time
-import json
-import numpy as np
-import pandas as pd
-from datetime import datetime
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from scipy.stats import norm, linregress
-from nba_api.stats.endpoints import playergamelog
-from joblib import Parallel, delayed, Memory
-import hashlib
+flask==3.1.1
+flask-cors==6.0.1
+nba-api==1.10.0
+pandas==2.3.0
+scikit-learn==1.7.0
+joblib==1.5.1
+scipy==1.16.0
