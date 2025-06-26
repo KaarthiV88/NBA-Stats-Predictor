@@ -1,5 +1,6 @@
-from predictive_model import AdvancedNBAPlayerPredictor
+from predictive_model import pm
 import bet_calculations as bc
+
 
 def get_category_choice(choice):
     categories = {
@@ -32,7 +33,7 @@ def main():
         betting_line = float(input("Enter the betting line: "))
 
         player_id = bc.get_player_id(player_name)
-        predictor = AdvancedNBAPlayerPredictor()
+        predictor = pm()
         result = predictor.predict_over_under(
             player_id=player_id,
             category=category,
