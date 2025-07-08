@@ -3,12 +3,15 @@ from nba_api.stats.endpoints import playergamelog, leaguedashplayerstats, league
 from nba_api.stats.static import teams, players
 from joblib import Memory
 import logging
+import os
+from retrying import retry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Cache for API calls
 cache = Memory(location='./bet_cache', verbose=0)
+cache.clear()  # Clear cache on startup to ensure fresh data
 
 def get_player_headshot_url(player_id):
     """Constructs the URL for a player's headshot."""
@@ -44,34 +47,80 @@ def get_team_id(team_abbr):
         logger.error(f"Error fetching team ID for {team_abbr}: {e}")
         return None
 
+@retry(stop_max_attempt_number=3, wait_fixed=2000)
+def fetch_game_log(player_id, season, season_type):
+    """Fetch game log with retries."""
+    return playergamelog.PlayerGameLog(
+        player_id=player_id,
+        season=season,
+        season_type_all_star=season_type,
+        timeout=120
+    ).get_data_frames()[0]
+
+@retry(stop_max_attempt_number=3, wait_fixed=2000)
+def fetch_advanced_stats(player_id, season, season_type):
+    """Fetch advanced stats with retries."""
+    return leaguedashplayerstats.LeagueDashPlayerStats(
+        player_id_list=[player_id],
+        season=season,
+        season_type_all_star=season_type,
+        timeout=120
+    ).get_data_frames()[0]
+
 @cache.cache
 def get_player_season_recent_averages(player_id, season, season_type, recent_n=10):
-    """Get season and recent game averages for a player."""
+    """Get season and recent game averages for a player across all stats."""
+    logger.info(f"Fetching averages for player_id: {player_id}, season: {season}, season_type: {season_type}")
     try:
-        gamelog = playergamelog.PlayerGameLog(
-            player_id=player_id,
-            season=season,
-            season_type_all_star=season_type,
-            timeout=60
-        ).get_data_frames()[0]
-        if gamelog.empty:
-            logger.warning(f"No game log data for player {player_id}, season {season}")
+        # Prioritize 2023-24 for stability, fallback to 2024-25 and 2022-23
+        seasons_to_try = ['2023-24', '2024-25', '2022-23']
+        gamelog = None
+        for s in seasons_to_try:
+            try:
+                gamelog = fetch_game_log(player_id, s, season_type)
+                logger.info(f"Game log for player {player_id}, season {s}: {gamelog.shape[0]} games")
+                if not gamelog.empty:
+                    logger.info(f"Successfully fetched game log for player {player_id}, season {s}")
+                    break
+                logger.warning(f"Empty game log for player {player_id}, season {s}")
+            except Exception as e:
+                logger.warning(f"Error fetching game log for player {player_id}, season {s}: {e}")
+        if gamelog is None or gamelog.empty:
+            logger.error(f"No valid game log data for player {player_id} across seasons {seasons_to_try}")
             return {
-                'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0},
-                'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0}
+                'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
+                'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
             }
+
+        # Calculate basic averages
         season_avgs = gamelog[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
         recent_games = gamelog.head(recent_n)
         recent_avgs = recent_games[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
+
+        # Fetch defensive rating
+        try:
+            advanced_stats = fetch_advanced_stats(player_id, season, season_type)
+            logger.info(f"Advanced stats for player {player_id}, season {season}: {advanced_stats.shape[0]} rows")
+            def_rating = advanced_stats[advanced_stats['PLAYER_ID'] == player_id]['DEF_RATING'].iloc[0] if not advanced_stats.empty and player_id in advanced_stats['PLAYER_ID'].values else 110.0
+            if def_rating == 0.0:
+                logger.warning(f"No DEF_RATING found for player {player_id}, using league average 110.0")
+                def_rating = 110.0
+        except Exception as e:
+            logger.warning(f"Error fetching advanced stats for player {player_id}, season {season}: {e}")
+            def_rating = 110.0
+
+        season_avgs['DEF_RATING'] = float(def_rating)
+        recent_avgs['DEF_RATING'] = float(def_rating)
+
         return {
-            'season_averages': {k: v for k, v in season_avgs.items() if not pd.isna(v)},
-            'recent_averages': {k: v for k, v in recent_avgs.items() if not pd.isna(v)}
+            'season_averages': {k: float(v) for k, v in season_avgs.items() if not pd.isna(v)},
+            'recent_averages': {k: float(v) for k, v in recent_avgs.items() if not pd.isna(v)}
         }
     except Exception as e:
-        logger.error(f"Error fetching averages for player {player_id}, season {season}: {e}")
+        logger.error(f"Unexpected error fetching averages for player {player_id}, season {season}: {e}")
         return {
-            'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0},
-            'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0}
+            'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
+            'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
         }
 
 @cache.cache
@@ -84,12 +133,7 @@ def get_head_to_head_stats(player_id, opponent_abbr, seasons=('2023-24', '2024-2
     game_logs = []
     for season in seasons:
         try:
-            gl = playergamelog.PlayerGameLog(
-                player_id=player_id,
-                season=season,
-                season_type_all_star='Regular Season',
-                timeout=60
-            ).get_data_frames()[0]
+            gl = fetch_game_log(player_id, season, 'Regular Season')
             gl['OPPONENT'] = gl['MATCHUP'].apply(
                 lambda x: x.split(' vs. ')[1] if ' vs. ' in x else x.split(' @ ')[1]
             )
@@ -124,16 +168,15 @@ def get_league_defensive_averages(season, season_type):
             season=season,
             season_type_all_star=season_type,
             measure_type_detailed_defense='Defense',
-            timeout=60
+            timeout=120
         ).get_data_frames()[0]
         logger.debug(f"Available columns in team stats for {season}: {stats.columns.tolist()}")
-        # Map expected stats to API defensive stat columns
         column_mapping = {
-            'PTS': 'OPP_PTS',  # Opponent points allowed
-            'REB': 'DREB',     # Defensive rebounds
-            'AST': 'OPP_AST',  # Opponent assists allowed
-            'BLK': 'BLK',      # Blocks (assumed correct, no warning)
-            'STL': 'STL'       # Steals (assumed correct, no warning)
+            'PTS': 'OPP_PTS',
+            'REB': 'DREB',
+            'AST': 'OPP_AST',
+            'BLK': 'BLK',
+            'STL': 'STL'
         }
         avgs = {}
         for stat, api_col in column_mapping.items():
@@ -156,7 +199,7 @@ def get_team_recent_stats(team_id, season, season_type, measure_type, num_games=
             team_id=team_id,
             season=season,
             season_type_all_star=season_type,
-            timeout=60
+            timeout=120
         ).get_data_frames()[0]
         recent = gamelog.head(num_games)
         stats = recent[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
@@ -182,35 +225,27 @@ def get_team_recent_stats(team_id, season, season_type, measure_type, num_games=
 def get_player_advanced_stats(player_id, season, season_type):
     """Get advanced player stats."""
     try:
-        stats = leaguedashplayerstats.LeagueDashPlayerStats(
-            season=season,
-            season_type_all_star=season_type,
-            timeout=60
-        ).get_data_frames()[0]
+        stats = fetch_advanced_stats(player_id, season, season_type)
         player_stats = stats[stats['PLAYER_ID'] == player_id]
         if player_stats.empty:
             logger.warning(f"No advanced stats for player {player_id}, season {season}")
-            return {'USG_PCT': 0.2, 'TS_PCT': 0.5}
+            return {'USG_PCT': 0.2, 'TS_PCT': 0.5, 'DEF_RATING': 110.0}
         player_stats = player_stats.iloc[0]
         return {
             'USG_PCT': player_stats.get('USG_PCT', 0.2),
-            'TS_PCT': player_stats.get('TS_PCT', 0.5)
+            'TS_PCT': player_stats.get('TS_PCT', 0.5),
+            'DEF_RATING': player_stats.get('DEF_RATING', 110.0)
         }
     except Exception as e:
         logger.error(f"Error fetching advanced stats for {player_id}, season {season}: {e}")
-        return {'USG_PCT': 0.2, 'TS_PCT': 0.5}
+        return {'USG_PCT': 0.2, 'TS_PCT': 0.5, 'DEF_RATING': 110.0}
 
 @cache.cache
 def get_player_fatigue_metrics(player_id, season, season_type, num_games=10):
     """Get fatigue metrics for a player."""
     try:
-        gamelog = playergamelog.PlayerGameLog(
-            player_id=player_id,
-            season=season,
-            season_type_all_star=season_type,
-            timeout=60
-        ).get_data_frames()[0]
-        recent = gamelog.head(num_games).copy()  # Create a copy to avoid SettingWithCopyWarning
+        gamelog = fetch_game_log(player_id, season, season_type)
+        recent = gamelog.head(num_games).copy()
         avg_min = recent['MIN'].mean() if not recent.empty else 30.0
         recent['GAME_DATE'] = pd.to_datetime(recent['GAME_DATE'], format='mixed', errors='coerce')
         rest_days = recent['GAME_DATE'].diff().dt.days.dropna().mean() if not recent.empty and len(recent) > 1 else 2.0
@@ -219,3 +254,17 @@ def get_player_fatigue_metrics(player_id, season, season_type, num_games=10):
     except Exception as e:
         logger.error(f"Error fetching fatigue metrics for {player_id}: {e}")
         return {'AVG_MIN': 30.0, 'AVG_REST_DAYS': 2.0}
+
+def get_all_active_players():
+    """Fetch a list of all current active NBA players from nba_api."""
+    try:
+        active_players = players.get_active_players()
+        if not active_players:
+            logger.warning("No active players retrieved from nba_api")
+            return []
+        player_list = [{'id': player['id'], 'full_name': player['full_name']} for player in active_players]
+        logger.info(f"Retrieved {len(player_list)} active players")
+        return player_list
+    except Exception as e:
+        logger.error(f"Error fetching active players: {str(e)}")
+        return []
