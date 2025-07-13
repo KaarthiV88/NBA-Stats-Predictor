@@ -1,3 +1,4 @@
+"""Advanced NBA Player Predictor module."""
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -16,8 +17,12 @@ import hashlib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# pylint: disable=too-many-instance-attributes, too-many-locals, too-many-branches, too-many-statements, broad-exception-caught, unused-argument, no-member
+
 class AdvancedNBAPlayerPredictor:
+    """Predicts NBA player performance using advanced features and models."""
     def __init__(self, n_components=0.95):
+        """Initialize the predictor."""
         self.gb_regressors = {}
         self.rf_regressors = {}
         self.scaler = StandardScaler()
@@ -39,13 +44,17 @@ class AdvancedNBAPlayerPredictor:
         }
         self.opponent_stats_cache = {}
         self.model_cache = {}
+        self.x_train = None  # Renamed from X_train for snake_case
 
     def compute_data_hash(self, all_games):
         """Compute SHA-256 hash of game log data."""
         data_str = all_games.to_json()
         return hashlib.sha256(data_str.encode()).hexdigest()
 
-    def prepare_data(self, player_id, seasons=['2023-24', '2024-25'], season_type='Regular Season'):
+    def prepare_data(self, player_id, seasons=None, season_type='Regular Season'):
+        """Prepare player game log data for modeling."""
+        if seasons is None:
+            seasons = ['2023-24', '2024-25']
         game_logs = []
         for season in seasons:
             for st in ['Regular Season', 'Playoffs']:
@@ -61,11 +70,12 @@ class AdvancedNBAPlayerPredictor:
                     df['SEASON_TYPE'] = st
                     game_logs.append(df)
                 except Exception as e:
-                    logger.warning(f"Error fetching game log for season {season}, type {st}: {e}")
+                    logger.warning("Error fetching game log for season %s, type %s: %s", season, st, e)
                     continue
         if not game_logs:
-            logger.warning(f"No game logs found for player_id {player_id}")
-            return pd.DataFrame(columns=['GAME_DATE', 'MATCHUP', 'SEASON', 'SEASON_TYPE', 'MIN'] + self.stat_categories)
+            logger.warning("No game logs found for player_id %s", player_id)
+            columns = ['GAME_DATE', 'MATCHUP', 'SEASON', 'SEASON_TYPE', 'MIN'] + self.stat_categories
+            return pd.DataFrame(columns=pd.Index(columns))
         all_games = pd.concat(game_logs).reset_index(drop=True)
         all_games['GAME_DATE'] = pd.to_datetime(all_games['GAME_DATE'], format='mixed', errors='coerce').dt.date
         all_games = all_games.sort_values('GAME_DATE', ascending=True)
@@ -89,7 +99,7 @@ class AdvancedNBAPlayerPredictor:
                         season=season,
                         season_type_all_star=season_type,
                         measure_type_detailed_defense='Defense',
-                        last_n_games=82,
+                        last_n_games='82',
                         timeout=60
                     ).get_data_frames()[0]
                     for _, row in team_stats.iterrows():
@@ -106,10 +116,10 @@ class AdvancedNBAPlayerPredictor:
                             'PACE': row.get('PACE', 100.0),
                             'DEF_RATING': row.get('DEF_RATING', 110.0)
                         })
-                        self.opponent_stats_cache[(team_id, season)] = pd.Series(stats)
-                    logger.debug(f"Fetched team stats for season {season}")
+                        self.opponent_stats_cache[(team_id, season)] = pd.Series(stats).astype(float)
+                    logger.debug("Fetched team stats for season %s", season)
                 except Exception as e:
-                    logger.warning(f"Error fetching team stats for season {season}: {e}")
+                    logger.warning("Error fetching team stats for season %s: %s", season, e)
 
     def compute_h2h_features(self, games, stat):
         """Compute H2H averages using prefix sums."""
@@ -121,6 +131,7 @@ class AdvancedNBAPlayerPredictor:
         return cumsum / counts
 
     def create_features(self, all_games, opponent_abbr, season_type, category_type='offensive'):
+        """Create features for modeling."""
         if len(all_games) < 5:
             raise ValueError("Insufficient game data (less than 5 games) to create reliable features")
 
@@ -136,7 +147,7 @@ class AdvancedNBAPlayerPredictor:
             }).combine_first(pd.Series({
                 'PACE': 100.0,
                 'DEF_RATING': 110.0
-            }))
+            })).to_dict()
 
         opponent_stats = {}
         for opp in all_games['OPPONENT'].unique():
@@ -159,7 +170,7 @@ class AdvancedNBAPlayerPredictor:
                         }))
                         self.opponent_stats_cache[(team_id, season)] = opponent_stats[(opp, season)]
             except Exception as e:
-                logger.warning(f"Error fetching stats for {opp}, season {season}: {e}")
+                logger.warning("Error fetching stats for %s, season %s: %s", opp, season, e)
                 for season in seasons:
                     opponent_stats[(opp, season)] = league_avgs[season]
 
@@ -171,9 +182,9 @@ class AdvancedNBAPlayerPredictor:
             }
             for opp, season in [(row['OPPONENT'], row['SEASON']) for _, row in all_games.iterrows()]
         ], index=all_games.index)
-        logger.debug(f"opp_data columns: {opp_data.columns}")
+        logger.debug("opp_data columns: %s", opp_data.columns)
         all_games = all_games.join(opp_data.drop(columns=['OPPONENT', 'SEASON']))
-        logger.debug(f"all_games columns after join: {all_games.columns}")
+        logger.debug("all_games columns after join: %s", all_games.columns)
 
         for stat in self.stat_categories:
             all_games[f'opp_strength_{stat}'] = all_games[f'opp_{stat}'] / league_avgs['2024-25'][f'opp_{stat}']
@@ -188,8 +199,9 @@ class AdvancedNBAPlayerPredictor:
         h2h_results = Parallel(n_jobs=-1)(delayed(compute_h2h_opp)(opp) for opp in all_games['OPPONENT'].unique())
         h2h_avgs = {stat: pd.Series(0.0, index=all_games.index) for stat in self.stat_categories}
         for result in h2h_results:
-            for stat, (idx, values) in result.items():
-                h2h_avgs[stat].loc[idx] = values
+            if result is not None:
+                for stat, (idx, values) in result.items():
+                    h2h_avgs[stat].loc[idx] = values
         for stat in self.stat_categories:
             all_games[f'h2h_avg_{stat}'] = h2h_avgs[stat]
         all_games['has_h2h'] = (all_games[[f'h2h_avg_{stat}' for stat in self.stat_categories]].sum(axis=1) > 0).astype(int)
@@ -253,9 +265,10 @@ class AdvancedNBAPlayerPredictor:
             'ts_pct': ts_pct
         }
 
-    def train_stat_model(self, stat_idx, stat, X_scaled, X_pca, y, data_hash):
-        """Train model for a single stat."""
-        logger.debug(f"Training model for stat {stat}, stat_idx {stat_idx}, X_scaled shape {X_scaled.shape}, X_pca shape {X_pca.shape}, y shape {y.shape}, data_hash {data_hash}")
+    def train_stat_model(self, stat_idx, stat, x_scaled, x_pca, y, data_hash):
+        """Train a model for a single stat."""
+        logger.debug("Training model for stat %s, stat_idx %s, x_scaled shape %s, x_pca shape %s, y shape %s, data_hash %s",
+                     stat, stat_idx, x_scaled.shape, x_pca.shape, y.shape, data_hash)
         y_stat = y[:, stat_idx]
         rf_param_grid = {
             'n_estimators': [50, 100],
@@ -269,7 +282,7 @@ class AdvancedNBAPlayerPredictor:
             scoring='neg_mean_squared_error',
             n_jobs=-1
         )
-        rf.fit(X_pca, y_stat)
+        rf.fit(x_pca, y_stat)
         gb_param_grid = {
             'n_estimators': [50, 100],
             'max_depth': [3, 5],
@@ -282,9 +295,9 @@ class AdvancedNBAPlayerPredictor:
             scoring='neg_mean_squared_error',
             n_jobs=-1
         )
-        gb.fit(X_pca, y_stat)
-        rf_preds = rf.best_estimator_.predict(X_pca)
-        gb_preds = gb.best_estimator_.predict(X_pca)
+        gb.fit(x_pca, y_stat)
+        rf_preds = rf.best_estimator_.predict(x_pca)
+        gb_preds = gb.best_estimator_.predict(x_pca)
         best_weight = 0.5
         best_mse = float('inf')
         for w in np.linspace(0, 1, 11):
@@ -297,20 +310,36 @@ class AdvancedNBAPlayerPredictor:
         self.model_cache[cache_key] = (rf.best_estimator_, gb.best_estimator_, best_weight)
         return stat, rf.best_estimator_, gb.best_estimator_, best_weight
 
-    def train_model(self, X, y, data_hash):
-        X_scaled = self.scaler.fit_transform(X.toarray())
-        X_pca = self.pca.fit_transform(X_scaled)
-        logger.debug(f"Calling Parallel with {len(self.stat_categories)} tasks")
-        results = Parallel(n_jobs=-1)(
-            delayed(self.train_stat_model)(stat_idx, stat, X_scaled, X_pca, y, data_hash)
-            for stat_idx, stat in enumerate(self.stat_categories)
-        )
-        for stat, rf_model, gb_model, weight in results:
-            self.rf_regressors[stat] = rf_model
-            self.gb_regressors[stat] = gb_model
-            self.ensemble_weights_rf[stat] = weight
+    def train_model(self, x, y, data_hash):
+        """Train all stat models."""
+        if x is not None and hasattr(x, 'toarray'):
+            x_scaled = self.scaler.fit_transform(x.toarray())
+        elif isinstance(x, (list, np.ndarray)):
+            x_scaled = self.scaler.fit_transform(np.array(x))
+        elif isinstance(x, csr_matrix):
+            x_scaled = self.scaler.fit_transform(x.toarray())
+        else:
+            x_scaled = self.scaler.fit_transform(x)
+        x_pca = self.pca.fit_transform(x_scaled)
+        logger.debug("Calling Parallel with %s tasks", len(self.stat_categories))
+        try:
+            results = Parallel(n_jobs=-1)(
+                delayed(self.train_stat_model)(stat_idx, stat, x_scaled, x_pca, y, data_hash)
+                for stat_idx, stat in enumerate(self.stat_categories)
+            )
+            # Ensure results is a list, even if Parallel returns None
+            if results is None:
+                results = []
+            for stat, rf_model, gb_model, weight in results:
+                self.rf_regressors[stat] = rf_model
+                self.gb_regressors[stat] = gb_model
+                self.ensemble_weights_rf[stat] = weight
+        except Exception as e:
+            logger.error("Error in parallel training: %s", e)
+            results = []
 
     def predict_performance(self, features, category, season_type, season_avgs, recent_avgs, h2h_avgs, opp_pace, usg_pct, avg_rest_days):
+        """Predict player performance."""
         features_scaled = self.scaler.transform(features.toarray())
         features_pca = self.pca.transform(features_scaled)
         stats_needed = self.stat_mapping.get(category.upper(), [category.upper()])
@@ -340,21 +369,42 @@ class AdvancedNBAPlayerPredictor:
         pred = 0.6 * model_pred + 0.4 * prior_pred
 
         residuals = []
-        X_train_scaled = self.scaler.transform(self.X_train.toarray())
+        # Handle different types of x_train
+        if hasattr(self.x_train, 'toarray'):
+            X_train_scaled = self.scaler.transform(self.x_train.toarray())
+        elif isinstance(self.x_train, (list, np.ndarray)):
+            X_train_scaled = self.scaler.transform(np.array(self.x_train))
+        elif isinstance(self.x_train, csr_matrix):
+            X_train_scaled = self.scaler.transform(self.x_train.toarray())
+        else:
+            X_train_scaled = self.scaler.transform(self.x_train)
         X_train_pca = self.pca.transform(X_train_scaled)
         for stat in stats_needed:
             stat_idx = self.stat_categories.index(stat)
             rf_train_preds = self.rf_regressors[stat].predict(X_train_pca)
             gb_train_preds = self.gb_regressors[stat].predict(X_train_pca)
             ensemble_train_preds = self.ensemble_weights_rf[stat] * rf_train_preds + (1 - self.ensemble_weights_rf[stat]) * gb_train_preds
-            residuals.append(ensemble_train_preds - self.y_train[:, stat_idx])
+            # Handle different types of y_train
+            if hasattr(self.y_train, '__getitem__') and hasattr(self.y_train, 'shape'):
+                try:
+                    if len(self.y_train.shape) > 1:
+                        residuals.append(ensemble_train_preds - self.y_train[:, stat_idx])
+                    else:
+                        residuals.append(ensemble_train_preds - self.y_train[stat_idx])
+                except (IndexError, TypeError):
+                    residuals.append(ensemble_train_preds - self.y_train[stat_idx])
+            else:
+                residuals.append(ensemble_train_preds - self.y_train[stat_idx])
         residuals = np.sum(residuals, axis=0)
         sigma = np.std(residuals) if np.std(residuals) > 0 else 1.0
-        sigma = max(sigma, 1.0 if len(stats_needed) == 1 else 1.5)
+        sigma = max(float(sigma), 1.0 if len(stats_needed) == 1 else 1.5)
         ci_lower, ci_upper = norm.interval(0.95, loc=pred, scale=sigma)
         return pred, sigma, (ci_lower, ci_upper)
 
-    def predict_over_under(self, player_id, category, opponent_abbr, season_type, betting_line, category_type='offensive', seasons=['2023-24', '2024-25']):
+    def predict_over_under(self, player_id, category, opponent_abbr, season_type, betting_line, category_type='offensive', seasons=None):
+        """Predict over/under for a player and category."""
+        if seasons is None:
+            seasons = ['2023-24', '2024-25']
         all_games = self.prepare_data(player_id, seasons, season_type)
         if all_games.empty:
             raise ValueError("No game data available to make prediction")
@@ -362,18 +412,25 @@ class AdvancedNBAPlayerPredictor:
         data_hash = self.compute_data_hash(all_games)
 
         features = self.create_features(all_games, opponent_abbr, season_type, category_type)
-        X, y, opponent_strengths, usg_pct, avg_rest_days, avg_min, ts_pct = (
+        x, y, opponent_strengths, usg_pct, avg_rest_days, avg_min, ts_pct = (
             features['X_sparse'], features['y'], features['opponent_stats'], features['usg_pct'],
             features['avg_rest_days'], features['avg_min'], features['ts_pct']
         )
-        self.X_train, _, self.y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
-        self.train_model(self.X_train, self.y_train, data_hash)
+        self.x_train, _, self.y_train, _ = train_test_split(x, y, test_size=0.2, random_state=42)
+        self.train_model(self.x_train, self.y_train, data_hash)
 
         averages = bc.get_player_season_recent_averages(player_id, '2024-25', season_type)
         season_avgs = averages['season_averages']
         recent_avgs = averages['recent_averages']
         h2h_stats, h2h_games = bc.get_head_to_head_stats(player_id, opponent_abbr, seasons)
-        h2h_avgs = h2h_stats[self.stat_categories].mean().fillna(0) if not h2h_stats.empty else pd.Series({stat: 0.0 for stat in self.stat_categories})
+        if isinstance(h2h_stats, pd.DataFrame) and not h2h_stats.empty:
+            h2h_avgs = h2h_stats[self.stat_categories].mean()
+            if hasattr(h2h_avgs, 'fillna') and callable(getattr(h2h_avgs, 'fillna', None)):
+                h2h_avgs = h2h_avgs.fillna(0)
+            else:
+                h2h_avgs = pd.Series({stat: 0.0 for stat in self.stat_categories})
+        else:
+            h2h_avgs = pd.Series({stat: 0.0 for stat in self.stat_categories})
 
         opp_team_id = bc.get_team_id(opponent_abbr)
         measure_type = 'Defense' if category_type == 'offensive' else 'Base'
@@ -384,20 +441,35 @@ class AdvancedNBAPlayerPredictor:
             'AST': opp_recent_stats.get('AST', 25.0),
             'BLK': opp_recent_stats.get('BLK', 5.0),
             'STL': opp_recent_stats.get('STL', 7.0),
-            'RATING': opp_recent_stats.get('DEF_RATING' if measure_type == 'Defense' else 'OFF_RATING', 110.0)
+            'DEF_RATING': opp_recent_stats.get('DEF_RATING', 110.0),
+            'OFF_RATING': opp_recent_stats.get('OFF_RATING', 110.0),
         }
 
         recent_means = {f'recent_form_{stat}': y[:, self.stat_categories.index(stat)].ravel()[-5:].mean() for stat in self.stat_categories}
         ema_trends = {}
         recent_games = all_games.tail(10)
         for stat in self.stat_categories:
-            if not recent_games.empty:
-                ema = recent_games[stat].ewm(span=5, adjust=False).mean().iloc[-1]
-                ema_trends[stat] = ema - recent_games[stat].mean() if len(recent_games) > 1 else 0.0
+            if not recent_games.empty and hasattr(recent_games[stat], 'ewm'):
+                try:
+                    if hasattr(recent_games[stat], 'ewm') and callable(getattr(recent_games[stat], 'ewm', None)):
+                        ema = recent_games[stat].ewm(span=5, adjust=False).mean().iloc[-1]
+                        ema_trends[stat] = ema - recent_games[stat].mean() if len(recent_games) > 1 else 0.0
+                    else:
+                        ema_trends[stat] = 0.0
+                except (AttributeError, TypeError, IndexError):
+                    ema_trends[stat] = 0.0
             else:
                 ema_trends[stat] = 0.0
 
-        logger.debug(f"opponent_strengths keys: {list(opponent_strengths.keys())}")
+        logger.debug("opponent_strengths keys: %s", list(opponent_strengths.keys()))
+        
+        # Set RATING to the correct value for the stat_type before using it
+        stat_type = 'Defensive' if category_type == 'offensive' else 'Offensive'
+        if stat_type == 'Defensive':
+            opp_avgs['RATING'] = opp_avgs['DEF_RATING']
+        else:
+            opp_avgs['RATING'] = opp_avgs['OFF_RATING']
+            
         upcoming_features = pd.DataFrame({
             'recency_weight': [1.0],
             'same_opponent': [1],
@@ -418,7 +490,7 @@ class AdvancedNBAPlayerPredictor:
             **{f'h2h_avg_{stat}': [h2h_avgs[stat]] for stat in self.stat_categories},
             **{f'opp_recent_{stat}': [opp_avgs[stat]] for stat in self.stat_categories},
             **{f'ema_trend_{stat}': [ema_trends[stat]] for stat in self.stat_categories}
-        }, index=[0])[self.feature_cols].fillna(0)
+        }, index=pd.Index([0]))[self.feature_cols].fillna(0)
 
         upcoming_features_sparse = csr_matrix(upcoming_features.values)
         pred, sigma, ci = self.predict_performance(
@@ -432,11 +504,21 @@ class AdvancedNBAPlayerPredictor:
         stats_needed = self.stat_mapping.get(category.upper(), [category.upper()])
         if isinstance(stats_needed, str):
             stats_needed = [stats_needed]
-        season_avg = sum(season_avgs.get(stat, 0.0) for stat in stats_needed)
-        recent_avg = sum(recent_avgs.get(stat, 0.0) for stat in stats_needed)
-        h2h_avg = sum(h2h_avgs.get(stat, 0.0) for stat in stats_needed)
+        
+        # Safe float conversions with None handling
+        def safe_float(value):
+            if value is None:
+                return 0.0
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return 0.0
+        
+        season_avg = sum(safe_float(season_avgs.get(stat, 0.0)) for stat in stats_needed)
+        recent_avg = sum(safe_float(recent_avgs.get(stat, 0.0)) for stat in stats_needed)
+        h2h_avg = sum(safe_float(h2h_avgs.get(stat, 0.0)) for stat in stats_needed)
 
-        stat_type = 'Defensive' if category_type == 'offensive' else 'Offensive'
+        # stat_type is already set above, no need to set RATING again
         message = f"Head-to-Head Matchups vs. {opponent_abbr}:\n"
         if h2h_games:
             for game in h2h_games:
@@ -459,4 +541,4 @@ class AdvancedNBAPlayerPredictor:
                    f"\nPredicted {category}: {pred:.1f} (95% CI: {ci[0]:.1f}-{ci[1]:.1f})\n"
                    f"P(Over {betting_line}): {p_over*100:.1f}%\n"
                    f"{confidence*100:.1f}% confident bet on {bet_on.upper()}")
-        return {'bet_on': bet_on, 'confidence': confidence, 'message': message}
+        return {'bet_on': bet_on, 'confidence': confidence, 'message': message, 'opp_averages': opp_avgs}
