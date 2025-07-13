@@ -1,3 +1,4 @@
+"""Flask server for NBA Betting Predictor API."""
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from predictive_model import AdvancedNBAPlayerPredictor
@@ -62,6 +63,27 @@ def get_teams():
         logger.error(f"Error fetching teams: {str(e)}")
         return jsonify({"error": f"Service unavailable: {str(e)}"}), 503
 
+@app.route('/api/player-details/<player_name>', methods=['GET'])
+def get_player_details(player_name):
+    """API endpoint to get detailed player information."""
+    try:
+        player_info = bc.get_player_id(player_name)
+        if not player_info:
+            logger.error(f"Player not found: {player_name}")
+            return jsonify({"error": f"Player '{player_name}' not found"}), 404
+
+        # Fetch detailed player information
+        detailed_info = bc.get_player_detailed_info(player_info['player_id'])
+        if detailed_info:
+            player_info.update(detailed_info)
+
+        logger.info(f"Player details fetched for {player_name}")
+        return jsonify(player_info)
+
+    except Exception as e:
+        logger.error(f"Error fetching player details for {player_name}: {str(e)}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
 @app.route('/api/predict', methods=['GET'])
 def predict():
     """API endpoint to get player prediction and headshot URL."""
@@ -76,9 +98,12 @@ def predict():
             logger.error("Missing required parameters")
             return jsonify({"error": "Missing required parameters: player_name, category, opponent_abbr, betting_line"}), 400
 
+        if betting_line is None:
+            logger.error("betting_line is None")
+            return jsonify({"error": "betting_line is required"}), 400
         try:
             betting_line = float(betting_line)
-        except ValueError:
+        except (ValueError, TypeError):
             logger.error(f"Invalid betting_line: {betting_line}")
             return jsonify({"error": "betting_line must be a number"}), 400
 
@@ -97,6 +122,11 @@ def predict():
         if not player_info:
             logger.error(f"Player not found: {player_name}")
             return jsonify({"error": f"Player '{player_name}' not found"}), 404
+
+        # Fetch detailed player information
+        detailed_info = bc.get_player_detailed_info(player_info['player_id'])
+        if detailed_info:
+            player_info.update(detailed_info)
 
         team_id = bc.get_team_id(opponent_abbr)
         if not team_id:
