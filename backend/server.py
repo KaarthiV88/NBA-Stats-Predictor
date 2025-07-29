@@ -133,10 +133,10 @@ def predict():
             logger.error(f"Team not found: {opponent_abbr}")
             return jsonify({"error": f"Team '{opponent_abbr}' not found"}), 404
 
-        # Fetch additional data for prediction, default to 2023-24 for stability
-        logger.info(f"Fetching averages for player {player_name} using season 2023-24")
+        # Fetch additional data for prediction, use current season (2024-25) for player averages
+        logger.info(f"Fetching averages for player {player_name} using current season")
         h2h_stats, h2h_list = bc.get_head_to_head_stats(player_info['player_id'], opponent_abbr)
-        averages = bc.get_player_season_recent_averages(player_info['player_id'], '2023-24', season_type)
+        averages = bc.get_player_season_recent_averages(player_info['player_id'], '2024-25', season_type)
         logger.debug(f"Player averages for {player_name}: {averages}")
 
         result = predictor.predict_over_under(
@@ -151,6 +151,9 @@ def predict():
         result['player_name'] = player_name
         result['h2h_list'] = h2h_list
         result['player_averages'] = averages
+        # Ensure predicted_value is always present in the response
+        if 'predicted_value' not in result:
+            result['predicted_value'] = None
         logger.debug(f"Prediction result for {player_name}: {result}")
 
         logger.info(f"Prediction successful for {player_name}, category {category}, opponent {opponent_abbr}")
