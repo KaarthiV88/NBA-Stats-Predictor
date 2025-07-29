@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from scipy.stats import norm
@@ -13,6 +13,16 @@ import bet_calculations as bc
 import logging
 from joblib import Parallel, delayed
 import hashlib
+# Add XGBoost and LightGBM imports
+try:
+    from xgboost import XGBRegressor
+except ImportError:
+    XGBRegressor = None
+try:
+    from lightgbm import LGBMRegressor
+except ImportError:
+    LGBMRegressor = None
+from sklearn.linear_model import LinearRegression, Ridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +40,9 @@ class AdvancedNBAPlayerPredictor:
         self.stat_categories = ['PTS', 'REB', 'AST', 'BLK', 'STL']
         self.feature_cols = None
         self.ensemble_weights_rf = {}
+        self.xgb_regressors = {}
+        self.lgbm_regressors = {}
+        self.ensemble_weights = {}  # Dict of stat: (rf, gb, xgb, lgbm) weights
         self.stat_mapping = {
             'POINTS': 'PTS',
             'REBOUNDS': 'REB',
@@ -45,6 +58,7 @@ class AdvancedNBAPlayerPredictor:
         self.opponent_stats_cache = {}
         self.model_cache = {}
         self.x_train = None  # Renamed from X_train for snake_case
+        self.stacking_meta_models = {}  # stat: LinearRegression
 
     def compute_data_hash(self, all_games):
         """Compute SHA-256 hash of game log data."""
@@ -266,49 +280,85 @@ class AdvancedNBAPlayerPredictor:
         }
 
     def train_stat_model(self, stat_idx, stat, x_scaled, x_pca, y, data_hash):
-        """Train a model for a single stat."""
-        logger.debug("Training model for stat %s, stat_idx %s, x_scaled shape %s, x_pca shape %s, y shape %s, data_hash %s",
-                     stat, stat_idx, x_scaled.shape, x_pca.shape, y.shape, data_hash)
         y_stat = y[:, stat_idx]
-        rf_param_grid = {
-            'n_estimators': [50, 100],
-            'max_depth': [5, 10],
-            'min_samples_split': [2, 5]
+        n_samples = x_pca.shape[0]
+        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        # Prepare OOF predictions for stacking
+        oof_preds = []
+        for _ in range(4):
+            oof_preds.append(np.zeros(n_samples))
+        # Hyperparameter grids
+        rf_param_dist = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [5, 10, 15, None],
+            'min_samples_split': [2, 5, 10]
         }
-        rf = GridSearchCV(
-            RandomForestRegressor(random_state=42),
-            rf_param_grid,
-            cv=3,
-            scoring='neg_mean_squared_error',
-            n_jobs=-1
-        )
-        rf.fit(x_pca, y_stat)
-        gb_param_grid = {
-            'n_estimators': [50, 100],
-            'max_depth': [3, 5],
-            'learning_rate': [0.05, 0.1]
+        gb_param_dist = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [3, 5, 7],
+            'learning_rate': [0.01, 0.05, 0.1, 0.2]
         }
-        gb = GridSearchCV(
-            GradientBoostingRegressor(random_state=42),
-            gb_param_grid,
-            cv=3,
-            scoring='neg_mean_squared_error',
-            n_jobs=-1
-        )
-        gb.fit(x_pca, y_stat)
-        rf_preds = rf.best_estimator_.predict(x_pca)
-        gb_preds = gb.best_estimator_.predict(x_pca)
-        best_weight = 0.5
-        best_mse = float('inf')
-        for w in np.linspace(0, 1, 11):
-            ensemble_preds = w * rf_preds + (1 - w) * gb_preds
-            mse = np.mean((ensemble_preds - y_stat) ** 2)
-            if mse < best_mse:
-                best_mse = mse
-                best_weight = w
-        cache_key = (stat, data_hash)
-        self.model_cache[cache_key] = (rf.best_estimator_, gb.best_estimator_, best_weight)
-        return stat, rf.best_estimator_, gb.best_estimator_, best_weight
+        xgb_param_dist = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [3, 5, 7],
+            'learning_rate': [0.01, 0.05, 0.1, 0.2]
+        }
+        lgbm_param_dist = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [3, 5, 7, -1],
+            'learning_rate': [0.01, 0.05, 0.1, 0.2]
+        }
+        # Fit base models with OOF predictions
+        for train_idx, val_idx in kf.split(x_pca):
+            X_train, X_val = x_pca[train_idx], x_pca[val_idx]
+            y_train, y_val = y_stat[train_idx], y_stat[val_idx]
+            # RF
+            rf = RandomizedSearchCV(RandomForestRegressor(random_state=42), rf_param_dist, n_iter=5, cv=2, n_jobs=-1, scoring='neg_mean_squared_error', random_state=42)
+            rf.fit(X_train, y_train)
+            oof_preds[0][val_idx] = rf.predict(X_val)
+            # GB
+            gb = RandomizedSearchCV(GradientBoostingRegressor(random_state=42), gb_param_dist, n_iter=5, cv=2, n_jobs=-1, scoring='neg_mean_squared_error', random_state=42)
+            gb.fit(X_train, y_train)
+            oof_preds[1][val_idx] = gb.predict(X_val)
+            # XGB
+            if XGBRegressor is not None:
+                xgb = XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42, verbosity=0)
+                xgb.fit(X_train, y_train)
+                oof_preds[2][val_idx] = xgb.predict(X_val)
+            else:
+                xgb = None
+            # LGBM
+            if LGBMRegressor is not None:
+                lgbm = LGBMRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42, verbose=-1)
+                lgbm.fit(X_train, y_train)
+                oof_preds[3][val_idx] = lgbm.predict(X_val)
+            else:
+                lgbm = None
+        # Train meta-model on OOF predictions
+        X_stack = np.vstack(oof_preds).T  # shape: (n_samples, n_models)
+        meta_model = Ridge(alpha=1.0)  # Slight regularization for stability
+        meta_model.fit(X_stack, y_stat)
+        self.stacking_meta_models[stat] = meta_model
+        # Fit final base models on all data for prediction use
+        rf_final = RandomizedSearchCV(RandomForestRegressor(random_state=42), rf_param_dist, n_iter=5, cv=2, n_jobs=-1, scoring='neg_mean_squared_error', random_state=42)
+        rf_final.fit(x_pca, y_stat)
+        gb_final = RandomizedSearchCV(GradientBoostingRegressor(random_state=42), gb_param_dist, n_iter=5, cv=2, n_jobs=-1, scoring='neg_mean_squared_error', random_state=42)
+        gb_final.fit(x_pca, y_stat)
+        if XGBRegressor is not None:
+            xgb_final = XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42, verbosity=0)
+            xgb_final.fit(x_pca, y_stat)
+        else:
+            xgb_final = None
+        if LGBMRegressor is not None:
+            lgbm_final = LGBMRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42, verbose=-1)
+            lgbm_final.fit(x_pca, y_stat)
+        else:
+            lgbm_final = None
+        self.rf_regressors[stat] = rf_final.best_estimator_
+        self.gb_regressors[stat] = gb_final.best_estimator_
+        self.xgb_regressors[stat] = xgb_final
+        self.lgbm_regressors[stat] = lgbm_final
+        return stat, rf_final.best_estimator_, gb_final.best_estimator_, xgb_final, lgbm_final, meta_model
 
     def train_model(self, x, y, data_hash):
         """Train all stat models."""
@@ -321,24 +371,21 @@ class AdvancedNBAPlayerPredictor:
         else:
             x_scaled = self.scaler.fit_transform(x)
         x_pca = self.pca.fit_transform(x_scaled)
-        logger.debug("Calling Parallel with %s tasks", len(self.stat_categories))
         try:
             results = Parallel(n_jobs=-1)(
                 delayed(self.train_stat_model)(stat_idx, stat, x_scaled, x_pca, y, data_hash)
                 for stat_idx, stat in enumerate(self.stat_categories)
             )
-            # Ensure results is a list, even if Parallel returns None
-            if results is None:
-                results = []
-            for stat, rf_model, gb_model, weight in results:
+            for stat, rf_model, gb_model, xgb_model, lgbm_model, meta_model in results:
                 self.rf_regressors[stat] = rf_model
                 self.gb_regressors[stat] = gb_model
-                self.ensemble_weights_rf[stat] = weight
+                self.xgb_regressors[stat] = xgb_model
+                self.lgbm_regressors[stat] = lgbm_model
+                self.stacking_meta_models[stat] = meta_model
         except Exception as e:
             logger.error("Error in parallel training: %s", e)
-            results = []
 
-    def predict_performance(self, features, category, season_type, season_avgs, recent_avgs, h2h_avgs, opp_pace, usg_pct, avg_rest_days):
+    def predict_performance(self, features, category, season_type, season_avgs, recent_avgs, h2h_avgs, opp_avgs, usg_pct, avg_rest_days):
         """Predict player performance."""
         features_scaled = self.scaler.transform(features.toarray())
         features_pca = self.pca.transform(features_scaled)
@@ -347,29 +394,72 @@ class AdvancedNBAPlayerPredictor:
             stats_needed = [stats_needed]
         model_pred = 0.0
         pred_stats = {}
+        base_model_outputs = {}
         for stat in self.stat_categories:
-            rf_pred = self.rf_regressors[stat].predict(features_pca)[0]
-            gb_pred = self.gb_regressors[stat].predict(features_pca)[0]
-            ensemble_pred = self.ensemble_weights_rf[stat] * rf_pred + (1 - self.ensemble_weights_rf[stat]) * gb_pred
+            preds = []
+            base_preds = []
+            # RF
+            rf_model = self.rf_regressors.get(stat)
+            if rf_model is not None:
+                rf_pred = rf_model.predict(features_pca)[0]
+                preds.append(rf_pred)
+                base_preds.append(rf_pred)
+            # GB
+            gb_model = self.gb_regressors.get(stat)
+            if gb_model is not None:
+                gb_pred = gb_model.predict(features_pca)[0]
+                preds.append(gb_pred)
+                base_preds.append(gb_pred)
+            # XGB
+            xgb_model = self.xgb_regressors.get(stat)
+            if xgb_model is not None:
+                xgb_pred = xgb_model.predict(features_pca)[0]
+                preds.append(xgb_pred)
+                base_preds.append(xgb_pred)
+            # LGBM
+            lgbm_model = self.lgbm_regressors.get(stat)
+            if lgbm_model is not None:
+                lgbm_pred = lgbm_model.predict(features_pca)[0]
+                preds.append(lgbm_pred)
+                base_preds.append(lgbm_pred)
+            # Stacking meta-model
+            if stat in self.stacking_meta_models and len(base_preds) > 1:
+                meta_model = self.stacking_meta_models[stat]
+                X_stack = np.array(base_preds).reshape(1, -1)
+                ensemble_pred = meta_model.predict(X_stack)[0]
+            elif preds:
+                weights = np.array([1] * len(preds)) / len(preds)
+                ensemble_pred = np.average(preds, weights=weights)
+            else:
+                ensemble_pred = 0.0
             pred_stats[stat] = ensemble_pred
+            base_model_outputs[stat] = {
+                'rf': preds[0] if len(preds) > 0 else None,
+                'gb': preds[1] if len(preds) > 1 else None,
+                'xgb': preds[2] if len(preds) > 2 else None,
+                'lgbm': preds[3] if len(preds) > 3 else None,
+                'stacked': ensemble_pred
+            }
             if stat in stats_needed:
                 model_pred += ensemble_pred
-
+        # Calculate averages for weighted sum
         season_avg = sum(season_avgs.get(stat, 0.0) for stat in stats_needed)
         recent_avg = sum(recent_avgs.get(stat, 0.0) for stat in stats_needed)
+        season_long_avg = sum(season_avgs.get(stat, 0.0) for stat in stats_needed)  # Use season_averages as season_long_averages
         h2h_avg = sum(h2h_avgs.get(stat, 0.0) for stat in stats_needed)
-        other_factors = usg_pct * 10 + opp_pace / 100 - avg_rest_days / 2
-        num_h2h_games = len(h2h_avgs) if isinstance(h2h_avgs, pd.Series) else 0
-        if num_h2h_games >= 3:
-            weights = {'recent_avg': 0.35, 'h2h_avg': 0.35, 'opp_adjust': 0.15, 'season_avg': 0.15}
-        else:
-            weights = {'recent_avg': 0.45, 'season_avg': 0.35, 'opp_adjust': 0.15, 'h2h_avg': 0.05}
-        prior_pred = (weights['season_avg'] * season_avg + weights['recent_avg'] * recent_avg +
-                      weights['h2h_avg'] * h2h_avg + weights['opp_adjust'] * other_factors)
-        pred = 0.6 * model_pred + 0.4 * prior_pred
+        opp_stats = ['PTS', 'REB', 'AST', 'BLK', 'STL']
+        opp_avg = np.mean([opp_avgs.get(stat, 0.0) for stat in opp_stats]) if opp_avgs else 0.0
+        # New weights: recent_avg=0.3, season_avg=0.3, season_long_avg=0.2, h2h_avg=0.1, opp_avg=0.1
+        weighted_avg = 0.3 * recent_avg + 0.3 * season_avg + 0.2 * season_long_avg + 0.1 * h2h_avg + 0.1 * opp_avg
+        # Blend weighted average with model output
+        final_pred = 0.5 * weighted_avg + 0.5 * model_pred
+        # Diagnostics
+        logger.info(f"Prediction diagnostics for {category}:\n"
+                    f"  season_avg={season_avg}, recent_avg={recent_avg}, season_long_avg={season_long_avg}, h2h_avg={h2h_avg}, opp_avg={opp_avg}\n"
+                    f"  base_model_outputs={base_model_outputs}\n"
+                    f"  weighted_avg={weighted_avg}, model_pred={model_pred}, final_pred={final_pred}")
 
         residuals = []
-        # Handle different types of x_train
         if hasattr(self.x_train, 'toarray'):
             X_train_scaled = self.scaler.transform(self.x_train.toarray())
         elif isinstance(self.x_train, (list, np.ndarray)):
@@ -381,10 +471,36 @@ class AdvancedNBAPlayerPredictor:
         X_train_pca = self.pca.transform(X_train_scaled)
         for stat in stats_needed:
             stat_idx = self.stat_categories.index(stat)
-            rf_train_preds = self.rf_regressors[stat].predict(X_train_pca)
-            gb_train_preds = self.gb_regressors[stat].predict(X_train_pca)
-            ensemble_train_preds = self.ensemble_weights_rf[stat] * rf_train_preds + (1 - self.ensemble_weights_rf[stat]) * gb_train_preds
-            # Handle different types of y_train
+            preds = []
+            model_weights = []
+            rf_model = self.rf_regressors.get(stat)
+            if rf_model is not None:
+                rf_train_preds = rf_model.predict(X_train_pca)
+                preds.append(rf_train_preds)
+                model_weights.append(1)
+            gb_model = self.gb_regressors.get(stat)
+            if gb_model is not None:
+                gb_train_preds = gb_model.predict(X_train_pca)
+                preds.append(gb_train_preds)
+                model_weights.append(1)
+            xgb_model = self.xgb_regressors.get(stat)
+            if xgb_model is not None:
+                xgb_train_preds = xgb_model.predict(X_train_pca)
+                preds.append(xgb_train_preds)
+                model_weights.append(1)
+            lgbm_model = self.lgbm_regressors.get(stat)
+            if lgbm_model is not None:
+                lgbm_train_preds = lgbm_model.predict(X_train_pca)
+                preds.append(lgbm_train_preds)
+                model_weights.append(1)
+            if preds:
+                weights = np.array(model_weights) / np.sum(model_weights)
+                ensemble_train_preds = np.average(preds, axis=0, weights=weights)
+            else:
+                if isinstance(self.y_train, np.ndarray) and len(self.y_train.shape) > 1:
+                    ensemble_train_preds = np.zeros_like(self.y_train[:, stat_idx])
+                else:
+                    ensemble_train_preds = np.zeros(len(self.y_train))
             if hasattr(self.y_train, '__getitem__') and hasattr(self.y_train, 'shape'):
                 try:
                     if len(self.y_train.shape) > 1:
@@ -398,8 +514,8 @@ class AdvancedNBAPlayerPredictor:
         residuals = np.sum(residuals, axis=0)
         sigma = np.std(residuals) if np.std(residuals) > 0 else 1.0
         sigma = max(float(sigma), 1.0 if len(stats_needed) == 1 else 1.5)
-        ci_lower, ci_upper = norm.interval(0.95, loc=pred, scale=sigma)
-        return pred, sigma, (ci_lower, ci_upper)
+        ci_lower, ci_upper = norm.interval(0.95, loc=final_pred, scale=sigma)
+        return final_pred, sigma, (ci_lower, ci_upper)
 
     def predict_over_under(self, player_id, category, opponent_abbr, season_type, betting_line, category_type='offensive', seasons=None):
         """Predict over/under for a player and category."""
@@ -422,6 +538,7 @@ class AdvancedNBAPlayerPredictor:
         averages = bc.get_player_season_recent_averages(player_id, '2024-25', season_type)
         season_avgs = averages['season_averages']
         recent_avgs = averages['recent_averages']
+        season_long_avgs = averages['season_long_averages']  # New key for season-long averages
         h2h_stats, h2h_games = bc.get_head_to_head_stats(player_id, opponent_abbr, seasons)
         if isinstance(h2h_stats, pd.DataFrame) and not h2h_stats.empty:
             h2h_avgs = h2h_stats[self.stat_categories].mean()
@@ -463,7 +580,6 @@ class AdvancedNBAPlayerPredictor:
 
         logger.debug("opponent_strengths keys: %s", list(opponent_strengths.keys()))
         
-        # Set RATING to the correct value for the stat_type before using it
         stat_type = 'Defensive' if category_type == 'offensive' else 'Offensive'
         if stat_type == 'Defensive':
             opp_avgs['RATING'] = opp_avgs['DEF_RATING']
@@ -494,31 +610,26 @@ class AdvancedNBAPlayerPredictor:
 
         upcoming_features_sparse = csr_matrix(upcoming_features.values)
         pred, sigma, ci = self.predict_performance(
-            upcoming_features_sparse, category, season_type, season_avgs, recent_avgs, h2h_avgs, opponent_strengths.get('PACE', 100.0), usg_pct, avg_rest_days
+            upcoming_features_sparse, category, season_type, season_avgs, recent_avgs, h2h_avgs, opp_avgs, usg_pct, avg_rest_days
         )
 
-        p_over = 1 - norm.cdf(betting_line, pred, sigma)
-        confidence = p_over if p_over > 0.5 else 1 - p_over
-        bet_on = 'over' if p_over > 0.5 else 'under'
+        final_pred = pred
 
-        stats_needed = self.stat_mapping.get(category.upper(), [category.upper()])
-        if isinstance(stats_needed, str):
-            stats_needed = [stats_needed]
-        
-        # Safe float conversions with None handling
-        def safe_float(value):
-            if value is None:
-                return 0.0
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                return 0.0
-        
-        season_avg = sum(safe_float(season_avgs.get(stat, 0.0)) for stat in stats_needed)
-        recent_avg = sum(safe_float(recent_avgs.get(stat, 0.0)) for stat in stats_needed)
-        h2h_avg = sum(safe_float(h2h_avgs.get(stat, 0.0)) for stat in stats_needed)
+        p_over = 1 - norm.cdf(betting_line, final_pred, sigma)
+        if p_over >= 0.5:
+            confidence_pct = p_over * 100
+            bet_on = 'over'
+        else:
+            confidence_pct = (1 - p_over) * 100
+            bet_on = 'under'
+        if bet_on == 'over' and confidence_pct < 50:
+            confidence_pct = 50
+        elif bet_on == 'under' and confidence_pct < 50:
+            confidence_pct = 50
 
-        # stat_type is already set above, no need to set RATING again
+        pred_rounded = int(round(final_pred))
+        ci_lower_rounded = int(round(ci[0]))
+        ci_upper_rounded = int(round(ci[1]))
         message = f"Head-to-Head Matchups vs. {opponent_abbr}:\n"
         if h2h_games:
             for game in h2h_games:
@@ -527,6 +638,19 @@ class AdvancedNBAPlayerPredictor:
                            f"BLK: {game['BLK']:.1f}, STL: {game['STL']:.1f}\n")
         else:
             message += "  No matchups found.\n"
+        def safe_float(value):
+            if value is None:
+                return 0.0
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return 0.0
+        stats_needed = self.stat_mapping.get(category.upper(), [category.upper()])
+        if isinstance(stats_needed, str):
+            stats_needed = [stats_needed]
+        season_avg = sum(safe_float(season_avgs.get(stat, 0.0)) for stat in stats_needed)
+        recent_avg = sum(safe_float(recent_avgs.get(stat, 0.0)) for stat in stats_needed)
+        h2h_avg = sum(safe_float(h2h_avgs.get(stat, 0.0)) for stat in stats_needed)
         message += (f"\nPlayer Averages for {category}:\n"
                    f"  Season: {season_avg:.1f}\n"
                    f"  Last 10 Games: {recent_avg:.1f}\n"
@@ -538,7 +662,7 @@ class AdvancedNBAPlayerPredictor:
                    f"  Blocks: {opp_avgs['BLK']:.1f}\n"
                    f"  Steals: {opp_avgs['STL']:.1f}\n"
                    f"  {stat_type} Rating: {opp_avgs['RATING']:.1f}\n"
-                   f"\nPredicted {category}: {pred:.1f} (95% CI: {ci[0]:.1f}-{ci[1]:.1f})\n"
+                   f"\nPredicted {category}: {pred_rounded} (95% CI: {ci_lower_rounded}-{ci_upper_rounded})\n"
                    f"P(Over {betting_line}): {p_over*100:.1f}%\n"
-                   f"{confidence*100:.1f}% confident bet on {bet_on.upper()}")
-        return {'bet_on': bet_on, 'confidence': confidence, 'message': message, 'opp_averages': opp_avgs}
+                   f"{confidence_pct:.1f}% confident bet on {bet_on.upper()}")
+        return {'bet_on': bet_on, 'confidence': confidence_pct, 'predicted_value': pred_rounded, 'message': message, 'opp_averages': opp_avgs, 'confidence_interval': f'{ci_lower_rounded}-{ci_upper_rounded}'}
