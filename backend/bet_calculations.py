@@ -55,6 +55,19 @@ def get_player_headshot_url(player_id):
     """Constructs the URL for a player's headshot."""
     return f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png?imwidth=1040&imheight=760"
 
+def get_combined_stat_value(stats_dict, category):
+    """Compute combined stat value from a stat dictionary and category string."""
+    mapping = {
+        'POINTS+REBOUNDS+ASSISTS': ['PTS', 'REB', 'AST'],
+        'REBOUNDS+ASSISTS': ['REB', 'AST'],
+        'POINTS+REBOUNDS': ['PTS', 'REB'],
+        'POINTS+ASSISTS': ['PTS', 'AST'],
+        'BLOCKS+STEALS': ['BLK', 'STL']
+    }
+    if category in mapping:
+        return sum(stats_dict.get(stat, 0.0) for stat in mapping[category])
+    return stats_dict.get(category, 0.0)
+
 @cache.cache
 def get_player_detailed_info(player_id):
     """Get detailed player information including height, weight, jersey, position, team, school, country."""
@@ -139,58 +152,57 @@ def fetch_advanced_stats(player_id, season, season_type):
 
 @cache.cache
 def get_player_season_recent_averages(player_id, season, season_type, recent_n=10):
-    """Get season and recent game averages for a player across all stats."""
+    """Get season, recent game, and season-long averages for a player across all stats."""
     logger.info(f"Fetching averages for player_id: {player_id}, season: {season}, season_type: {season_type}")
     try:
-        # Prioritize 2023-24 for stability, fallback to 2024-25 and 2022-23
-        seasons_to_try = ['2023-24', '2024-25', '2022-23']
+        seasons_to_try = ['2024-25', '2023-24', '2022-23', '2021-22', '2020-21']
         gamelog = None
         for s in seasons_to_try:
             try:
                 gamelog = fetch_game_log(player_id, s, season_type)
-                logger.info(f"Game log for player {player_id}, season {s}: {gamelog.shape[0]} games")
                 if not gamelog.empty:
-                    logger.info(f"Successfully fetched game log for player {player_id}, season {s}")
                     break
-                logger.warning(f"Empty game log for player {player_id}, season {s}")
             except Exception as e:
                 logger.warning(f"Error fetching game log for player {player_id}, season {s}: {e}")
         if gamelog is None or gamelog.empty:
             logger.error(f"No valid game log data for player {player_id} across seasons {seasons_to_try}")
             return {
                 'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
-                'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
+                'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
+                'season_long_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
             }
 
-        # Calculate basic averages
-        season_avgs = gamelog[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
-        recent_games = gamelog.head(recent_n)
+        # Calculate season-long averages
+        season_long_avgs = gamelog[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
+
+        # Calculate recent averages (last 10 games)
+        recent_games = gamelog.sort_values('GAME_DATE', ascending=False).head(recent_n)
         recent_avgs = recent_games[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
 
-        # Fetch defensive rating
-        try:
-            advanced_stats = fetch_advanced_stats(player_id, season, season_type)
-            logger.info(f"Advanced stats for player {player_id}, season {season}: {advanced_stats.shape[0]} rows")
-            def_rating = advanced_stats['DEF_RATING'].iloc[0] if not advanced_stats.empty else 110.0
-            if def_rating == 0.0:
-                logger.warning(f"No DEF_RATING found for player {player_id}, using league average 110.0")
-                def_rating = 110.0
-        except Exception as e:
-            logger.warning(f"Error fetching advanced stats for player {player_id}, season {season}: {e}")
-            def_rating = 110.0
+        # Add combined stats for both season and recent
+        for cat in ['POINTS+REBOUNDS+ASSISTS', 'REBOUNDS+ASSISTS', 'POINTS+REBOUNDS', 'POINTS+ASSISTS', 'BLOCKS+STEALS']:
+            season_long_avgs[cat] = get_combined_stat_value(season_long_avgs, cat)
+            recent_avgs[cat] = get_combined_stat_value(recent_avgs, cat)
 
-        season_avgs['DEF_RATING'] = float(def_rating)
+        # Fetch defensive rating
+        advanced_stats = get_player_advanced_stats(player_id, season, season_type)
+        def_rating = advanced_stats.get('DEF_RATING', 110.0)
+
+        # Add defensive rating to all average types
+        season_long_avgs['DEF_RATING'] = float(def_rating)
         recent_avgs['DEF_RATING'] = float(def_rating)
 
         return {
-            'season_averages': {k: float(v) for k, v in season_avgs.items() if not pd.isna(v)},
-            'recent_averages': {k: float(v) for k, v in recent_avgs.items() if not pd.isna(v)}
+            'season_averages': {k: float(v) for k, v in season_long_avgs.items() if not pd.isna(v)},  # Renamed for clarity with predictive_model.py
+            'recent_averages': {k: float(v) for k, v in recent_avgs.items() if not pd.isna(v)},
+            'season_long_averages': {k: float(v) for k, v in season_long_avgs.items() if not pd.isna(v)}  # Explicit season-long key
         }
     except Exception as e:
         logger.error(f"Unexpected error fetching averages for player {player_id}, season {season}: {e}")
         return {
             'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
-            'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
+            'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
+            'season_long_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0}
         }
 
 @cache.cache
@@ -242,7 +254,6 @@ def get_league_defensive_averages(season, season_type):
         ).get_data_frames()[0]
         logger.info(f"Available columns in team stats for {season}: {stats.columns.tolist()}")
         
-        # Try different possible column names for each stat
         column_mapping = {
             'PTS': ['OPP_PTS', 'OPP_PTS_PG', 'OPP_POINTS', 'OPP_PTS_PER_GAME'],
             'REB': ['DREB', 'OPP_REB', 'OPP_REB_PG', 'OPP_REB_PER_GAME'],
@@ -289,14 +300,12 @@ def get_team_recent_stats(team_id, season, season_type, measure_type, num_games=
         if recent.empty:
             logger.warning(f"No recent games for team {team_id}, season {season}")
             raise ValueError("No recent games")
-        # Calculate per-game averages
         stats = {}
         for stat in ['PTS', 'REB', 'AST', 'BLK', 'STL']:
             stats[stat] = recent[stat].mean() if stat in recent else None
         stats['PACE'] = recent['PACE'].mean() if 'PACE' in recent else None
         stats['DEF_RATING'] = recent['DEF_RATING'].mean() if 'DEF_RATING' in recent else None
         stats['OFF_RATING'] = recent['OFF_RATING'].mean() if 'OFF_RATING' in recent else None
-        # Fallback to defaults if any stat is missing
         for k, v in stats.items():
             if v is None or pd.isna(v):
                 logger.warning(f"Missing {k} for team {team_id}, using default value.")
