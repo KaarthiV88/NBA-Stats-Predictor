@@ -72,7 +72,7 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
         text: `Player Averages for ${category}`,
         color: '#fff',
         font: {
-          size: 22,
+          size: 28,
           weight: 'bold',
         },
         padding: { top: 10, bottom: 16 },
