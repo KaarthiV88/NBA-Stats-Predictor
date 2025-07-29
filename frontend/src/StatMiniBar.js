@@ -1,6 +1,6 @@
 import React from 'react';
 
-const StatMiniBar = ({ stat, value, category }) => {
+const StatMiniBar = ({ stat, value, category, title }) => {
   // Updated NBA-contextual thresholds for each stat
   const thresholds = {
     'PTS': [109, 112, 115, 118],
@@ -81,26 +81,33 @@ const StatMiniBar = ({ stat, value, category }) => {
   const fillPercentage = fill;
 
   return (
-    <div className="flex items-center space-x-2 mb-2">
-      <span className="text-sm font-medium text-gray-700 min-w-[80px]">
-        {stat === 'PTS' ? 'Points' :
-         stat === 'REB' ? 'Rebounds' :
-         stat === 'AST' ? 'Assists' :
-         stat === 'BLK' ? 'Blocks' :
-         stat === 'STL' ? 'Steals' : stat}:
-      </span>
-      <div className="flex-1 bg-gray-200 rounded-full h-2">
-        <div
-          className="h-2 rounded-full transition-all duration-300"
-          style={{
-            width: `${fillPercentage}%`,
-            ...style
-          }}
-        ></div>
+    <div className="stats-mini-bar-container">
+      {title && (
+        <div className="stats-mini-bar-title">
+          <h4 className="stats-title">{title}</h4>
+        </div>
+      )}
+      <div className="flex items-center space-x-2 mb-2">
+        <span className="text-sm font-medium text-gray-700 min-w-[80px]">
+          {stat === 'PTS' ? 'Points' :
+           stat === 'REB' ? 'Rebounds' :
+           stat === 'AST' ? 'Assists' :
+           stat === 'BLK' ? 'Blocks' :
+           stat === 'STL' ? 'Steals' : stat}:
+        </span>
+        <div className="flex-1 bg-gray-200 rounded-full h-2">
+          <div
+            className="h-2 rounded-full transition-all duration-300"
+            style={{
+              width: `${fillPercentage}%`,
+              ...style
+            }}
+          ></div>
+        </div>
+        <span className="text-sm font-semibold text-gray-800 min-w-[40px] text-right">
+          {value.toFixed(1)}
+        </span>
       </div>
-      <span className="text-sm font-semibold text-gray-800 min-w-[40px] text-right">
-        {value.toFixed(1)}
-      </span>
     </div>
   );
 };
