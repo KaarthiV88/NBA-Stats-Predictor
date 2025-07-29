@@ -6,14 +6,19 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 20px;
+  padding: 90px 20px 20px 20px; /* Top padding to accommodate fixed navbar */
   font-family: 'Helvetica', sans-serif;
+}
+
+.home-content {
+  width: 100%;
+  max-width: 1200px;
 }
 
 .app-title {
   font-size: 2.5em;
   font-weight: bold;
-  margin-bottom: 20px;
+  margin: 0 0 30px 0;
   color: #3EB489;
   text-align: center;
   animation: pulse 2s infinite;
@@ -397,6 +402,40 @@ td {
   }
 }
 
+@media (max-width: 768px) {
+  .app-container {
+    padding: 80px 15px 15px 15px;
+  }
+  
+  .home-content {
+    max-width: 100%;
+  }
+  
+  .app-title {
+    font-size: 2em;
+    margin-bottom: 25px;
+  }
+  
+  .stats-title {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-container {
+    padding: 70px 10px 10px 10px;
+  }
+  
+  .app-title {
+    font-size: 1.8em;
+    margin-bottom: 20px;
+  }
+  
+  .stats-title {
+    font-size: 22px;
+  }
+}
+
 @media (min-width: 1200px) {
   .cards-container {
     grid-template-columns: 1fr 1fr;
@@ -432,6 +471,24 @@ td {
   background-color: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   margin-top: 10px;
+}
+
+.stats-mini-bar-container {
+  width: 100%;
+}
+
+.stats-mini-bar-title {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.stats-title {
+  color: #FFFFFF;
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .stats-mini-bars .flex {
@@ -537,4 +594,31 @@ td {
 
 .stats-mini-bars .bg-blue-500 {
   background-color: #3b82f6;
+}
+
+.save-prediction-section {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+  padding: 20px 0;
+}
+
+.save-prediction-button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 1.1em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.save-prediction-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.save-prediction-button:active {
+  transform: translateY(0);
 }
