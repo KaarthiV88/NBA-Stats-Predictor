@@ -1,7 +1,7 @@
 """Advanced NBA Player Predictor module."""
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime 
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV, KFold, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
@@ -68,7 +68,7 @@ class AdvancedNBAPlayerPredictor:
     def prepare_data(self, player_id, seasons=None, season_type='Regular Season'):
         """Prepare player game log data for modeling."""
         if seasons is None:
-            seasons = ['2023-24', '2024-25']
+            seasons = ['2024-25', '2025-26']
         game_logs = []
         for season in seasons:
             for st in ['Regular Season', 'Playoffs']:
@@ -201,7 +201,7 @@ class AdvancedNBAPlayerPredictor:
         logger.debug("all_games columns after join: %s", all_games.columns)
 
         for stat in self.stat_categories:
-            all_games[f'opp_strength_{stat}'] = all_games[f'opp_{stat}'] / league_avgs['2024-25'][f'opp_{stat}']
+            all_games[f'opp_strength_{stat}'] = all_games[f'opp_{stat}'] / league_avgs['2025-26'][f'opp_{stat}']
         all_games['opp_pace'] = all_games.get('PACE', 100.0)
         all_games['opp_rating'] = all_games.get('DEF_RATING', 110.0)
 
@@ -221,10 +221,10 @@ class AdvancedNBAPlayerPredictor:
         all_games['has_h2h'] = (all_games[[f'h2h_avg_{stat}' for stat in self.stat_categories]].sum(axis=1) > 0).astype(int)
 
         player_id = all_games['Player_ID'].iloc[0]
-        advanced_stats = bc.get_player_advanced_stats(player_id, '2024-25', season_type)
+        advanced_stats = bc.get_player_advanced_stats(player_id, '2025-26', season_type)
         usg_pct = advanced_stats.get('USG_PCT', 0.2)
         ts_pct = advanced_stats.get('TS_PCT', 0.5)
-        fatigue_metrics = bc.get_player_fatigue_metrics(player_id, '2024-25', season_type, num_games=10)
+        fatigue_metrics = bc.get_player_fatigue_metrics(player_id, '2025-26', season_type, num_games=10)
         avg_min = fatigue_metrics.get('AVG_MIN', 30.0)
         avg_rest_days = fatigue_metrics.get('AVG_REST_DAYS', 2.0)
         injury_risk = 1 if avg_min > 38.0 or avg_rest_days < 1.0 else 0
@@ -520,7 +520,7 @@ class AdvancedNBAPlayerPredictor:
     def predict_over_under(self, player_id, category, opponent_abbr, season_type, betting_line, category_type='offensive', seasons=None):
         """Predict over/under for a player and category."""
         if seasons is None:
-            seasons = ['2023-24', '2024-25']
+            seasons = ['2024-25', '2025-26']
         all_games = self.prepare_data(player_id, seasons, season_type)
         if all_games.empty:
             raise ValueError("No game data available to make prediction")
@@ -535,7 +535,7 @@ class AdvancedNBAPlayerPredictor:
         self.x_train, _, self.y_train, _ = train_test_split(x, y, test_size=0.2, random_state=42)
         self.train_model(self.x_train, self.y_train, data_hash)
 
-        averages = bc.get_player_season_recent_averages(player_id, '2024-25', season_type)
+        averages = bc.get_player_season_recent_averages(player_id, '2025-26', season_type)
         season_avgs = averages['season_averages']
         recent_avgs = averages['recent_averages']
         season_long_avgs = averages['season_long_averages']  # New key for season-long averages
@@ -551,7 +551,7 @@ class AdvancedNBAPlayerPredictor:
 
         opp_team_id = bc.get_team_id(opponent_abbr)
         measure_type = 'Defense' if category_type == 'offensive' else 'Base'
-        opp_recent_stats = bc.get_team_recent_stats(opp_team_id, '2024-25', season_type, measure_type, num_games=10)
+        opp_recent_stats = bc.get_team_recent_stats(opp_team_id, '2025-26', season_type, measure_type, num_games=10)
         opp_avgs = {
             'PTS': opp_recent_stats.get('PTS', 110.0),
             'REB': opp_recent_stats.get('REB', 43.0),

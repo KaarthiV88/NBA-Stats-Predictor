@@ -155,7 +155,7 @@ def get_player_season_recent_averages(player_id, season, season_type, recent_n=1
     """Get season, recent game, and season-long averages for a player across all stats."""
     logger.info(f"Fetching averages for player_id: {player_id}, season: {season}, season_type: {season_type}")
     try:
-        seasons_to_try = ['2024-25', '2023-24', '2022-23', '2021-22', '2020-21']
+        seasons_to_try = ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22']
         gamelog = None
         for s in seasons_to_try:
             try:
@@ -206,7 +206,7 @@ def get_player_season_recent_averages(player_id, season, season_type, recent_n=1
         }
 
 @cache.cache
-def get_head_to_head_stats(player_id, opponent_abbr, seasons=('2023-24', '2024-25')):
+def get_head_to_head_stats(player_id, opponent_abbr, seasons=('2024-25', '2025-26')):
     """Get head-to-head stats vs. an opponent."""
     opponent_id = get_team_id(opponent_abbr)
     if not opponent_id:

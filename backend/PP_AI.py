@@ -41,7 +41,7 @@ def main():
             season_type=season_type,
             betting_line=betting_line,
             category_type='offensive' if category in ['POINTS', 'REBOUNDS', 'ASSISTS', 'POINTS+REBOUNDS+ASSISTS', 'REBOUNDS+ASSISTS', 'POINTS+REBOUNDS', 'POINTS+ASSISTS'] else 'defensive',
-            seasons=['2023-24', '2024-25']
+            seasons=['2024-25', '2025-26']
         )
 
         print("\n" + result['message'])
