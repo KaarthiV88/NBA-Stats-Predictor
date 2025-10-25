@@ -150,8 +150,8 @@ function App() {
     let interval;
     try {
       interval = setInterval(() => {
-        setProgress((prev) => (prev >= 100 ? 100 : prev + 20));
-      }, 500);
+        setProgress((prev) => (prev >= 90 ? 90 : prev + 5)); // Slower progress, stops at 90% until completion
+      }, 1000); // Update every second instead of every 500ms
 
       const response = await fetch(
         `http://localhost:5001/api/predict?player_name=${encodeURIComponent(selectedPlayer.full_name)}` +
@@ -159,7 +159,7 @@ function App() {
         `&opponent_abbr=${encodeURIComponent(selectedOpponent.abbreviation)}` +
         `&betting_line=${encodeURIComponent(bettingLine)}` +
         `&season_type=${encodeURIComponent(seasonType)}`,
-        { mode: 'cors', signal: AbortSignal.timeout(20000) }
+        { mode: 'cors', signal: AbortSignal.timeout(120000) } // Increased to 2 minutes
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const data = await response.json();
@@ -168,7 +168,13 @@ function App() {
       setError(null);
     } catch (err) {
       console.error('Prediction fetch failed:', err);
-      setError(`Error fetching prediction: ${err.message}`);
+      if (err.name === 'TimeoutError') {
+        setError('Prediction timed out. The calculation is taking longer than expected. Please try again or check if the backend server is running properly.');
+      } else if (err.name === 'AbortError') {
+        setError('Request was cancelled. Please try again.');
+      } else {
+        setError(`Error fetching prediction: ${err.message}`);
+      }
       setPrediction(null);
     } finally {
       setLoading(false);
