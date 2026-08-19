@@ -9,9 +9,34 @@ from retrying import retry
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Cache for API calls
-cache = Memory(location='./bet_cache', verbose=0)
-cache.clear()  # Clear cache on startup to ensure fresh data
+# --- Season configuration -------------------------------------------------
+# The app models on the current NBA season plus the one before it. Two seasons
+# gives the model enough history to train on while keeping every sample recent
+# enough to reflect current rosters, rotations and pace. Anything older is
+# deliberately excluded rather than used as a deep fallback.
+CURRENT_SEASON = '2025-26'
+PREVIOUS_SEASON = '2024-25'
+
+# Chronological order (oldest first) -- used for training/H2H windows.
+SEASONS = (PREVIOUS_SEASON, CURRENT_SEASON)
+
+# Most-recent-first -- used when looking for the freshest data available and
+# falling back only "as needed".
+SEASONS_BY_RECENCY = (CURRENT_SEASON, PREVIOUS_SEASON)
+
+# Cache for API calls.
+#
+# Most managed hosts give a deployed app a read-only project directory with only
+# /tmp writable, so the cache location is configurable. Set BET_CACHE_DIR to
+# override; locally it stays ./bet_cache so nothing changes for development.
+CACHE_DIR = os.environ.get('BET_CACHE_DIR', './bet_cache')
+cache = Memory(location=CACHE_DIR, verbose=0)
+
+# Clearing on startup keeps stats fresh across restarts. Skip it when the cache
+# is meant to persist (e.g. a warm serverless instance being reused), since
+# wiping it on every cold start defeats the point of caching at all.
+if os.environ.get('BET_CACHE_PERSIST', '').lower() not in ('1', 'true', 'yes'):
+    cache.clear()
 
 # NBA Team Primary Colors (official team colors)
 TEAM_COLORS = {
@@ -155,7 +180,7 @@ def get_player_season_recent_averages(player_id, season, season_type, recent_n=1
     """Get season, recent game, and season-long averages for a player across all stats."""
     logger.info(f"Fetching averages for player_id: {player_id}, season: {season}, season_type: {season_type}")
     try:
-        seasons_to_try = ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22']
+        seasons_to_try = SEASONS_BY_RECENCY
         gamelog = None
         for s in seasons_to_try:
             try:
@@ -206,7 +231,7 @@ def get_player_season_recent_averages(player_id, season, season_type, recent_n=1
         }
 
 @cache.cache
-def get_head_to_head_stats(player_id, opponent_abbr, seasons=('2024-25', '2025-26')):
+def get_head_to_head_stats(player_id, opponent_abbr, seasons=SEASONS):
     """Get head-to-head stats vs. an opponent."""
     opponent_id = get_team_id(opponent_abbr)
     if not opponent_id:
@@ -225,7 +250,18 @@ def get_head_to_head_stats(player_id, opponent_abbr, seasons=('2024-25', '2025-2
     if not game_logs:
         return pd.DataFrame(), []
     all_games = pd.concat(game_logs).reset_index(drop=True)
-    h2h_games = all_games[all_games['OPPONENT'] == opponent_abbr]
+    h2h_games = all_games[all_games['OPPONENT'] == opponent_abbr].copy()
+
+    # Sort newest game first. The per-season logs each arrive newest-first, but
+    # concatenating seasons in chronological order interleaves them wrongly --
+    # a current-season game would otherwise land below last season's games.
+    # Sorting on a parsed date (not the display string) is what makes this
+    # correct across season and year boundaries.
+    h2h_games['_game_dt'] = pd.to_datetime(
+        h2h_games['GAME_DATE'], format='mixed', errors='coerce'
+    )
+    h2h_games = h2h_games.sort_values('_game_dt', ascending=False, na_position='last')
+
     h2h_stats = h2h_games[['PTS', 'REB', 'AST', 'BLK', 'STL']]
     h2h_list = [
         {

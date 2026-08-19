@@ -2,22 +2,16 @@ import React from 'react';
 import { render } from '@testing-library/react';
 import PlayerAveragesChart from './PlayerAveragesChart';
 
-// Mock Chart.js to avoid canvas issues in tests
-jest.mock('chart.js', () => ({
-  Chart: {
-    register: jest.fn(),
-  },
-  CategoryScale: jest.fn(),
-  LinearScale: jest.fn(),
-  BarElement: jest.fn(),
-  Title: jest.fn(),
-  Tooltip: jest.fn(),
-  Legend: jest.fn(),
-}));
-
+// Only the rendering layer is mocked. chart.js itself stays real -- the
+// annotation/datalabels plugins subclass its internals at import time, so a
+// hand-rolled chart.js mock is far more brittle than simply never mounting a
+// canvas. Mocking `react-chartjs-2` is what keeps jsdom out of canvas code.
 jest.mock('react-chartjs-2', () => ({
   Bar: () => <div data-testid="bar-chart">Mock Chart</div>,
 }));
+
+jest.mock('chartjs-plugin-datalabels', () => ({ id: 'datalabels' }));
+jest.mock('chartjs-plugin-annotation', () => ({ id: 'annotation' }));
 
 describe('PlayerAveragesChart', () => {
   const defaultProps = {

@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import PlayerAveragesChart from './PlayerAveragesChart';
 import StatMiniBar from './StatMiniBar';
 import PredictionScorecard from './PredictionScorecard';
 import Navbar from './Navbar';
 import SavedPredictions from './SavedPredictions';
+import { apiUrl } from './api';
 
 // Betting categories (matched with backend)
 const bettingCategories = [
@@ -13,12 +14,53 @@ const bettingCategories = [
   'Points+Rebounds', 'Points+Assists', 'Blocks+Steals'
 ];
 
+// Which raw box-score keys make up each betting category. Combined categories
+// are just the sum of their parts, so one table drives every lookup.
+const CATEGORY_STATS = {
+  'Points': ['PTS'],
+  'Rebounds': ['REB'],
+  'Assists': ['AST'],
+  'Blocks': ['BLK'],
+  'Steals': ['STL'],
+  'Points+Rebounds+Assists': ['PTS', 'REB', 'AST'],
+  'Rebounds+Assists': ['REB', 'AST'],
+  'Points+Rebounds': ['PTS', 'REB'],
+  'Points+Assists': ['PTS', 'AST'],
+  'Blocks+Steals': ['BLK', 'STL']
+};
+
+const sumCategory = (source, category) =>
+  (CATEGORY_STATS[category] || ['PTS']).reduce((total, key) => total + (source?.[key] || 0), 0);
+
+// Short ticker-style label for a category, e.g. "PRA"
+const CATEGORY_TICKER = {
+  'Points': 'PTS',
+  'Rebounds': 'REB',
+  'Assists': 'AST',
+  'Blocks': 'BLK',
+  'Steals': 'STL',
+  'Points+Rebounds+Assists': 'PRA',
+  'Rebounds+Assists': 'RA',
+  'Points+Rebounds': 'PR',
+  'Points+Assists': 'PA',
+  'Blocks+Steals': 'BS'
+};
+
 // Fallback player list for testing
 const fallbackPlayers = [
   { id: 2544, full_name: "LeBron James" },
   { id: 201939, full_name: "Stephen Curry" },
   { id: 203076, full_name: "Kevin Durant" }
 ];
+
+const readSavedCount = () => {
+  try {
+    const saved = localStorage.getItem('savedPredictions');
+    return saved ? JSON.parse(saved).length : 0;
+  } catch {
+    return 0;
+  }
+};
 
 function App() {
   const [players, setPlayers] = useState([]);
@@ -37,22 +79,24 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [playerDropdownIndex, setPlayerDropdownIndex] = useState(-1);
   const [opponentDropdownIndex, setOpponentDropdownIndex] = useState(-1);
-  const [initialShiftApplied, setInitialShiftApplied] = useState(false);
   const playerInputRef = useRef(null);
   const opponentInputRef = useRef(null);
   const [progress, setProgress] = useState(0);
   const [currentPage, setCurrentPage] = useState('home');
+  const [savedCount, setSavedCount] = useState(readSavedCount);
+  const [toast, setToast] = useState(null);
+
+  const showToast = useCallback((message, tone = 'success') => {
+    setToast({ message, tone });
+    setTimeout(() => setToast(null), 3200);
+  }, []);
 
   const fetchPlayerDetails = async (playerName) => {
     try {
-      console.log('Fetching details for:', playerName);
       const encodedName = encodeURIComponent(playerName);
-      console.log('Encoded name:', encodedName);
-      const response = await fetch(`http://localhost:5001/api/player-details/${encodedName}`, { mode: 'cors' });
-      console.log('Response status:', response.status);
+      const response = await fetch(apiUrl(`/api/player-details/${encodedName}`), { mode: 'cors' });
       if (response.ok) {
         const data = await response.json();
-        console.log('Fetched player details:', data);
         return {
           height: data.height,
           weight: data.weight,
@@ -66,66 +110,62 @@ function App() {
           country: data.country,
           season_exp: data.season_exp
         };
-      } else {
-        const errorText = await response.text();
-        console.error('API error:', response.status, errorText);
       }
-    } catch (error) {
-      console.error('Error fetching player details:', error);
+      console.error('API error:', response.status, await response.text());
+    } catch (err) {
+      console.error('Error fetching player details:', err);
     }
     return null;
   };
 
-  useEffect(() => {
-    const fetchData = async (retryCount = 3) => {
-      setLoading(true);
-      for (let attempt = 1; attempt <= retryCount; attempt++) {
-        try {
-          const playersResponse = await fetch('http://localhost:5001/api/all-players', { mode: 'cors', signal: AbortSignal.timeout(20000) });
-          if (!playersResponse.ok) throw new Error(`HTTP ${playersResponse.status}: ${await playersResponse.text()}`);
-          const playersData = await playersResponse.json();
-          if (!Array.isArray(playersData)) throw new Error('Invalid players data format');
-          setPlayers(playersData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
+  // Shared loader for the player + team reference lists.
+  const loadReferenceData = useCallback(async (retryCount = 3) => {
+    setLoading(true);
+    for (let attempt = 1; attempt <= retryCount; attempt++) {
+      try {
+        const playersResponse = await fetch(apiUrl('/api/all-players'), { mode: 'cors', signal: AbortSignal.timeout(20000) });
+        if (!playersResponse.ok) throw new Error(`HTTP ${playersResponse.status}: ${await playersResponse.text()}`);
+        const playersData = await playersResponse.json();
+        if (!Array.isArray(playersData)) throw new Error('Invalid players data format');
+        setPlayers(playersData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
 
-          const teamsResponse = await fetch('http://localhost:5001/api/teams', { mode: 'cors', signal: AbortSignal.timeout(20000) });
-          if (!teamsResponse.ok) throw new Error(`HTTP ${teamsResponse.status}: ${await teamsResponse.text()}`);
-          const teamsData = await teamsResponse.json();
-          if (!Array.isArray(teamsData)) throw new Error('Invalid teams data format');
-          setTeams(teamsData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
+        const teamsResponse = await fetch(apiUrl('/api/teams'), { mode: 'cors', signal: AbortSignal.timeout(20000) });
+        if (!teamsResponse.ok) throw new Error(`HTTP ${teamsResponse.status}: ${await teamsResponse.text()}`);
+        const teamsData = await teamsResponse.json();
+        if (!Array.isArray(teamsData)) throw new Error('Invalid teams data format');
+        setTeams(teamsData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
 
-          setError(null);
-          break;
-        } catch (err) {
-          console.error(`Attempt ${attempt} failed:`, err);
-          if (attempt === retryCount) {
-            console.warn('Falling back to default players due to fetch failure');
-            setPlayers(fallbackPlayers);
-            setError(`Error fetching data: ${err.message}. Check backend at http://localhost:5001 or console logs.`);
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-          }
+        setError(null);
+        setLoading(false);
+        return;
+      } catch (err) {
+        console.error(`Attempt ${attempt} failed:`, err);
+        if (attempt === retryCount) {
+          console.warn('Falling back to default players due to fetch failure');
+          setPlayers(fallbackPlayers);
+          setError(`Could not reach the prediction backend: ${err.message}`);
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
         }
       }
-      setLoading(false);
-    };
-    fetchData();
+    }
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadReferenceData();
+  }, [loadReferenceData]);
 
   // Fetch player details when selectedPlayer changes
   useEffect(() => {
     if (selectedPlayer && selectedPlayer.full_name && !selectedPlayer.height) {
-      console.log('Fetching details for selected player:', selectedPlayer.full_name);
       fetchPlayerDetails(selectedPlayer.full_name).then(details => {
-        console.log('Details fetched:', details);
         if (details) {
-          setSelectedPlayer(prev => {
-            const updated = { ...prev, ...details };
-            console.log('Updated player with details:', updated);
-            return updated;
-          });
+          setSelectedPlayer(prev => ({ ...prev, ...details }));
         }
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlayer?.full_name]);
 
   const filteredPlayers = players.filter(player =>
@@ -137,39 +177,39 @@ function App() {
     team.abbreviation.toLowerCase().includes(opponentSearch.toLowerCase())
   );
 
+  const isTicketReady = Boolean(selectedPlayer && category && bettingLine && selectedOpponent);
+
   const handleRunPrediction = async () => {
-    if (!selectedPlayer || !category || !bettingLine || !selectedOpponent) {
-      setError('Please fill in all fields.');
+    if (!isTicketReady) {
+      setError('Select a player, category, line and opponent before pricing the market.');
       return;
     }
     setLoading(true);
     setProgress(0);
     setPrediction(null);
-    setInitialShiftApplied(true); // Trigger shift when prediction starts
 
     let interval;
     try {
       interval = setInterval(() => {
-        setProgress((prev) => (prev >= 90 ? 90 : prev + 5)); // Slower progress, stops at 90% until completion
-      }, 1000); // Update every second instead of every 500ms
+        setProgress((prev) => (prev >= 90 ? 90 : prev + 5));
+      }, 1000);
 
       const response = await fetch(
-        `http://localhost:5001/api/predict?player_name=${encodeURIComponent(selectedPlayer.full_name)}` +
+        apiUrl(`/api/predict?player_name=${encodeURIComponent(selectedPlayer.full_name)}`) +
         `&category=${encodeURIComponent(category)}` +
         `&opponent_abbr=${encodeURIComponent(selectedOpponent.abbreviation)}` +
         `&betting_line=${encodeURIComponent(bettingLine)}` +
         `&season_type=${encodeURIComponent(seasonType)}`,
-        { mode: 'cors', signal: AbortSignal.timeout(120000) } // Increased to 2 minutes
+        { mode: 'cors', signal: AbortSignal.timeout(120000) }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const data = await response.json();
-      console.log('Prediction data:', data);
       setPrediction(data);
       setError(null);
     } catch (err) {
       console.error('Prediction fetch failed:', err);
       if (err.name === 'TimeoutError') {
-        setError('Prediction timed out. The calculation is taking longer than expected. Please try again or check if the backend server is running properly.');
+        setError('Pricing timed out. The model is taking longer than expected — try again, or check that the backend is running.');
       } else if (err.name === 'AbortError') {
         setError('Request was cancelled. Please try again.');
       } else {
@@ -184,32 +224,29 @@ function App() {
   };
 
   const handleSavePrediction = () => {
-    if (!prediction || !selectedPlayer || !selectedOpponent) {
-      return;
-    }
+    if (!prediction || !selectedPlayer || !selectedOpponent) return;
 
     try {
       const savedPrediction = {
         id: Date.now().toString(),
         player: selectedPlayer,
-        category: category,
-        bettingLine: bettingLine,
+        category,
+        bettingLine,
         opponent: selectedOpponent,
-        seasonType: seasonType,
-        prediction: prediction,
+        seasonType,
+        prediction,
         savedAt: new Date().toISOString()
       };
 
       const existingSaved = localStorage.getItem('savedPredictions');
       const savedPredictions = existingSaved ? JSON.parse(existingSaved) : [];
-      savedPredictions.unshift(savedPrediction); // Add to beginning
+      savedPredictions.unshift(savedPrediction);
       localStorage.setItem('savedPredictions', JSON.stringify(savedPredictions));
-
-      // Show success message (you could add a toast notification here)
-      alert('Prediction saved successfully!');
-    } catch (error) {
-      console.error('Error saving prediction:', error);
-      alert('Error saving prediction. Please try again.');
+      setSavedCount(savedPredictions.length);
+      showToast('Position added');
+    } catch (err) {
+      console.error('Error saving prediction:', err);
+      showToast('Could not save position', 'error');
     }
   };
 
@@ -217,30 +254,23 @@ function App() {
     setError(null);
     setPlayers([]);
     setTeams([]);
-    setLoading(true);
-    const fetchData = async () => {
-      try {
-        const playersResponse = await fetch('http://localhost:5001/api/all-players', { mode: 'cors', signal: AbortSignal.timeout(20000) });
-        if (!playersResponse.ok) throw new Error(`HTTP ${playersResponse.status}: ${await playersResponse.text()}`);
-        const playersData = await playersResponse.json();
-        if (!Array.isArray(playersData)) throw new Error('Invalid players data format');
-        setPlayers(playersData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
+    loadReferenceData(1);
+  };
 
-        const teamsResponse = await fetch('http://localhost:5001/api/teams', { mode: 'cors', signal: AbortSignal.timeout(20000) });
-        if (!teamsResponse.ok) throw new Error(`HTTP ${teamsResponse.status}: ${await teamsResponse.text()}`);
-        const teamsData = await teamsResponse.json();
-        if (!Array.isArray(teamsData)) throw new Error('Invalid teams data format');
-        setTeams(teamsData.sort((a, b) => a.full_name.localeCompare(b.full_name)));
+  const selectPlayer = (player) => {
+    setSelectedPlayer(player);
+    setSearchTerm(player.full_name);
+    setShowPlayerDropdown(false);
+    setPlayerDropdownIndex(-1);
+    setPrediction(null);
+  };
 
-        setError(null);
-      } catch (err) {
-        console.error('Retry failed:', err);
-        setError(`Retry failed: ${err.message}. Check backend at http://localhost:5001.`);
-        setPlayers(fallbackPlayers);
-      }
-      setLoading(false);
-    };
-    fetchData();
+  const selectOpponent = (team) => {
+    setSelectedOpponent(team);
+    setOpponentSearch(team.full_name);
+    setShowOpponentDropdown(false);
+    setOpponentDropdownIndex(-1);
+    setPrediction(null);
   };
 
   const handlePlayerKeyDown = (e) => {
@@ -253,13 +283,9 @@ function App() {
       setPlayerDropdownIndex((prev) => Math.max(prev - 1, 0));
     } else if (e.key === 'Enter' && playerDropdownIndex >= 0) {
       e.preventDefault();
-      const selected = filteredPlayers[playerDropdownIndex];
-      setSelectedPlayer(selected);
-      setSearchTerm(selected.full_name);
+      selectPlayer(filteredPlayers[playerDropdownIndex]);
+    } else if (e.key === 'Escape') {
       setShowPlayerDropdown(false);
-      setPlayerDropdownIndex(-1);
-      setPrediction(null);
-      setInitialShiftApplied(false); // Reset shift when player changes
     }
   };
 
@@ -273,31 +299,67 @@ function App() {
       setOpponentDropdownIndex((prev) => Math.max(prev - 1, 0));
     } else if (e.key === 'Enter' && opponentDropdownIndex >= 0) {
       e.preventDefault();
-      const selected = filteredTeams[opponentDropdownIndex];
-      setSelectedOpponent(selected);
-      setOpponentSearch(selected.full_name);
+      selectOpponent(filteredTeams[opponentDropdownIndex]);
+    } else if (e.key === 'Escape') {
       setShowOpponentDropdown(false);
-      setOpponentDropdownIndex(-1);
     }
   };
 
+  const accent = selectedPlayer?.team_color || '#3EB489';
+  const ticker = CATEGORY_TICKER[category] || '';
+
+  const h2hAverage = prediction?.h2h_list?.length
+    ? prediction.h2h_list.reduce((sum, game) => sum + sumCategory(game, category), 0) / prediction.h2h_list.length
+    : 0;
+
   return (
     <div className="app-container">
-      <Navbar currentPage={currentPage} onPageChange={setCurrentPage} />
-      
+      <Navbar currentPage={currentPage} onPageChange={setCurrentPage} positionCount={savedCount} />
+
+      {toast && (
+        <div className={`toast toast-${toast.tone}`} role="status">{toast.message}</div>
+      )}
+
       {currentPage === 'saved' ? (
-        <SavedPredictions />
+        <SavedPredictions onCountChange={setSavedCount} />
       ) : (
-        <div className="home-content">
-          <h1 className="app-title">NBA Stats Predictor</h1>
+        <main className="page">
+          <header className="page-header">
+            <div>
+              <h1 className="page-title">Player Prop Markets</h1>
+              <p className="page-subtitle">
+                Price any NBA player prop against the book. The model trains on the
+                2024-25 and 2025-26 seasons and quotes both sides in cents.
+              </p>
+            </div>
+            <div className="page-header-stats">
+              <div className="header-stat">
+                <span className="label-micro">Players</span>
+                <span className="header-stat-value num">{players.length || '--'}</span>
+              </div>
+              <div className="header-stat">
+                <span className="label-micro">Teams</span>
+                <span className="header-stat-value num">{teams.length || '--'}</span>
+              </div>
+              <div className="header-stat">
+                <span className="label-micro">Positions</span>
+                <span className="header-stat-value num">{savedCount}</span>
+              </div>
+            </div>
+          </header>
+
           {error && (
-            <div className="error-message">
-              <p>{error}</p>
-              <button onClick={handleRetryFetch} className="retry-button">Retry</button>
+            <div className="banner banner-error" role="alert">
+              <span className="banner-icon" aria-hidden="true">!</span>
+              <p className="banner-text">{error}</p>
+              <button onClick={handleRetryFetch} className="btn btn-ghost">Retry</button>
             </div>
           )}
-          <div className="content-wrapper">
+
+          {/* --- Market search ------------------------------------------- */}
+          <div className="search-block">
             <div className="search-container">
+              <span className="search-icon" aria-hidden="true">⌕</span>
               <input
                 type="text"
                 value={searchTerm}
@@ -309,29 +371,23 @@ function App() {
                 onFocus={() => setShowPlayerDropdown(true)}
                 onBlur={() => setTimeout(() => setShowPlayerDropdown(false), 200)}
                 onKeyDown={handlePlayerKeyDown}
-                placeholder="Search for an NBA player..."
+                placeholder="Search a player to open their market…"
                 className="search-input"
-                style={{ borderColor: '#3EB489' }} // App signature color
+                aria-label="Search for an NBA player"
                 ref={playerInputRef}
               />
               {showPlayerDropdown && searchTerm && (
-                <ul className="dropdown" style={{ borderColor: '#3EB489' }}>
+                <ul className="dropdown">
                   {filteredPlayers.length > 0 ? (
-                    filteredPlayers.map((player, index) => (
+                    filteredPlayers.slice(0, 60).map((player, index) => (
                       <li
                         key={player.id}
-                        onClick={() => {
-                          setSelectedPlayer(player);
-                          setSearchTerm(player.full_name);
-                          setShowPlayerDropdown(false);
-                          setPlayerDropdownIndex(-1);
-                          setPrediction(null);
-                          setInitialShiftApplied(false); // Reset shift when player changes
-                        }}
+                        onMouseDown={() => selectPlayer(player)}
+                        onMouseEnter={() => setPlayerDropdownIndex(index)}
                         className={`dropdown-item ${index === playerDropdownIndex ? 'selected' : ''}`}
-                        style={{ backgroundColor: index === playerDropdownIndex ? '#3EB489' : 'transparent' }}
                       >
-                        {player.full_name}
+                        <span>{player.full_name}</span>
+                        <span className="dropdown-hint label-micro">Open</span>
                       </li>
                     ))
                   ) : (
@@ -340,85 +396,91 @@ function App() {
                 </ul>
               )}
             </div>
+          </div>
 
-            <div className="cards-container">
-              {selectedPlayer && (
-                <div className={`player-card ${initialShiftApplied ? 'shifted' : ''}`} 
-                     style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>
-                  <div className="player-info-container">
-                    <div className="player-image-container">
-                      <img
-                        src={`https://cdn.nba.com/headshots/nba/latest/1040x760/${selectedPlayer.id}.png?imwidth=1040&imheight=760`}
-                        alt={selectedPlayer.full_name}
-                        className="player-image"
-                        style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}
-                        onError={(e) => { e.target.src = 'https://via.placeholder.com/128'; }}
-                      />
-                    </div>
-                    <div className="player-details">
-                      <h2 className="player-name" style={{ color: selectedPlayer.team_color || '#3EB489' }}>
-                        {selectedPlayer.full_name}
-                      </h2>
-                      <div className="player-info-grid">
-                        <div className="player-info-item">
-                          <span className="player-info-label">Height:</span>
-                          <span className="player-info-value">{selectedPlayer.height || 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Weight:</span>
-                          <span className="player-info-value">{selectedPlayer.weight ? `${selectedPlayer.weight} lbs` : 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Jersey:</span>
-                          <span className="player-info-value">#{selectedPlayer.jersey || 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Position:</span>
-                          <span className="player-info-value">{selectedPlayer.position || 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Team:</span>
-                          <span className="player-info-value">{selectedPlayer.team_city && selectedPlayer.team_name ? `${selectedPlayer.team_city} ${selectedPlayer.team_name}` : 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">School:</span>
-                          <span className="player-info-value">{selectedPlayer.school || 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Country:</span>
-                          <span className="player-info-value">{selectedPlayer.country || 'N/A'}</span>
-                        </div>
-                        <div className="player-info-item">
-                          <span className="player-info-label">Experience:</span>
-                          <span className="player-info-value">{selectedPlayer.season_exp ? `${selectedPlayer.season_exp} years` : 'N/A'}</span>
-                        </div>
-                      </div>
+          {!selectedPlayer ? (
+            <div className="empty-state">
+              <div className="empty-icon" aria-hidden="true">◎</div>
+              <h3>No market open</h3>
+              <p>Search for a player above to build a prop market and have the model price it.</p>
+            </div>
+          ) : (
+            <div className="market-layout">
+              {/* --- Left: the ticket ---------------------------------- */}
+              <section className="ticket market-surface" style={{ '--accent-team': accent }}>
+                <div className="ticket-player">
+                  <div className="ticket-portrait">
+                    <img
+                      src={`https://cdn.nba.com/headshots/nba/latest/1040x760/${selectedPlayer.id}.png?imwidth=1040&imheight=760`}
+                      alt={selectedPlayer.full_name}
+                      className="ticket-avatar"
+                      onError={(e) => { e.target.style.visibility = 'hidden'; }}
+                    />
+                  </div>
+                  <div className="ticket-identity">
+                    <h2 className="ticket-name">{selectedPlayer.full_name}</h2>
+                    <div className="ticket-meta">
+                      <span className="chip chip-accent">
+                        {selectedPlayer.team_abbreviation || '—'}
+                      </span>
+                      <span className="chip">#{selectedPlayer.jersey || '—'}</span>
+                      <span className="chip">{selectedPlayer.position || '—'}</span>
                     </div>
                   </div>
-                  <div className="input-group">
+                </div>
+
+                <dl className="ticket-vitals">
+                  {[
+                    ['Height', selectedPlayer.height],
+                    ['Weight', selectedPlayer.weight ? `${selectedPlayer.weight} lb` : null],
+                    ['Team', selectedPlayer.team_name],
+                    ['Exp', selectedPlayer.season_exp != null ? `${selectedPlayer.season_exp} yr` : null],
+                    ['School', selectedPlayer.school],
+                    ['Country', selectedPlayer.country]
+                  ].map(([label, value]) => (
+                    <div className="vital" key={label}>
+                      <dt className="label-micro">{label}</dt>
+                      <dd className="vital-value">{value || '—'}</dd>
+                    </div>
+                  ))}
+                </dl>
+
+                <hr className="hairline" />
+
+                <div className="ticket-form">
+                  <div className="field">
+                    <label className="label-micro" htmlFor="category">Market</label>
                     <select
+                      id="category"
                       value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      className="select-input"
-                      style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}
+                      onChange={(e) => { setCategory(e.target.value); setPrediction(null); }}
+                      className="input"
                     >
-                      <option value="" disabled>Select Betting Category</option>
+                      <option value="" disabled>Select a stat category</option>
                       {bettingCategories.map(cat => (
                         <option key={cat} value={cat}>{cat}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="field">
+                    <label className="label-micro" htmlFor="line">Line</label>
                     <input
+                      id="line"
                       type="number"
+                      step="0.5"
                       value={bettingLine}
-                      onChange={(e) => setBettingLine(e.target.value)}
-                      placeholder="Betting Line"
-                      className="text-input"
-                      style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}
+                      onChange={(e) => { setBettingLine(e.target.value); setPrediction(null); }}
+                      placeholder="25.5"
+                      className="input num"
                     />
                   </div>
-                  <div className="input-group">
-                    <div className="search-container" style={{ position: 'relative', width: '100%' }}>
+
+                  <div className="field field-full">
+                    <label className="label-micro" htmlFor="opponent">Opponent</label>
+                    <div className="search-container">
                       <input
+                        id="opponent"
                         type="text"
                         value={opponentSearch}
                         onChange={(e) => {
@@ -429,38 +491,22 @@ function App() {
                         onFocus={() => setShowOpponentDropdown(true)}
                         onBlur={() => setTimeout(() => setShowOpponentDropdown(false), 200)}
                         onKeyDown={handleOpponentKeyDown}
-                        placeholder="Search for opponent team..."
-                        className="text-input"
+                        placeholder="Search team…"
+                        className="input"
                         ref={opponentInputRef}
-                        style={{ borderColor: selectedPlayer.team_color || '#3EB489', width: '100%' }}
                       />
                       {showOpponentDropdown && opponentSearch && (
-                        <ul className="dropdown" style={{ 
-                          borderColor: selectedPlayer.team_color || '#3EB489',
-                          position: 'absolute',
-                          top: '100%',
-                          left: 0,
-                          right: 0,
-                          zIndex: 1000
-                        }}>
+                        <ul className="dropdown">
                           {filteredTeams.length > 0 ? (
                             filteredTeams.map((team, index) => (
                               <li
                                 key={team.id}
-                                onClick={() => {
-                                  setSelectedOpponent(team);
-                                  setOpponentSearch(team.full_name);
-                                  setShowOpponentDropdown(false);
-                                  setOpponentDropdownIndex(-1);
-                                  setPrediction(null);
-                                  setInitialShiftApplied(false);
-                                }}
+                                onMouseDown={() => selectOpponent(team)}
+                                onMouseEnter={() => setOpponentDropdownIndex(index)}
                                 className={`dropdown-item ${index === opponentDropdownIndex ? 'selected' : ''}`}
-                                style={{ backgroundColor: index === opponentDropdownIndex ? (selectedPlayer.team_color || '#3EB489') : 'transparent' }}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = selectedPlayer.team_color || '#3EB489'}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = index === opponentDropdownIndex ? (selectedPlayer.team_color || '#3EB489') : 'transparent'}
                               >
-                                {team.full_name} ({team.abbreviation})
+                                <span>{team.full_name}</span>
+                                <span className="dropdown-hint num">{team.abbreviation}</span>
                               </li>
                             ))
                           ) : (
@@ -470,222 +516,176 @@ function App() {
                       )}
                     </div>
                   </div>
-                  <div className="input-group">
-                    <select
-                      value={seasonType}
-                      onChange={(e) => setSeasonType(e.target.value)}
-                      className="select-input"
-                      style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}
-                    >
-                      <option value="Regular Season">Regular Season</option>
-                      <option value="Playoffs">Playoffs</option>
-                    </select>
-                  </div>
-                  <button 
-                    onClick={handleRunPrediction} 
-                    className="predict-button"
-                    style={{ 
-                      backgroundColor: selectedPlayer.team_color || '#3EB489',
-                      color: '#181A20'
-                    }}
-                  >
-                    Run Prediction
-                  </button>
-                </div>
-              )}
 
-              {(selectedPlayer && (loading || prediction)) && (
-                <div className={`prediction-card ${initialShiftApplied ? 'shifted' : ''}`}
-                     style={{ 
-                       backgroundColor: '#23242A', // Keep dark gray background
-                       borderColor: selectedPlayer.team_color || '#3EB489',
-                       boxShadow: `0 0 20px ${selectedPlayer.team_color || '#3EB489'}50`
-                     }}>
-                  {loading ? (
-                    <div className="loading-overlay">
-                      <div className="progress-bar-container">
-                        <div className="progress-bar" style={{ 
-                          width: `${progress}%`,
-                          backgroundColor: selectedPlayer.team_color || '#3EB489' 
-                        }}></div>
-                      </div>
-                      <div className="loading-text">{progress}%</div>
+                  <div className="field field-full">
+                    <label className="label-micro" htmlFor="seasonType">Season type</label>
+                    <div className="segmented" role="group" id="seasonType">
+                      {['Regular Season', 'Playoffs'].map(opt => (
+                        <button
+                          key={opt}
+                          type="button"
+                          className={`segmented-option ${seasonType === opt ? 'active' : ''}`}
+                          onClick={() => { setSeasonType(opt); setPrediction(null); }}
+                        >
+                          {opt}
+                        </button>
+                      ))}
                     </div>
-                  ) : prediction ? (
-                    <>
-                      <div className="prediction-result">
-                        <h3 className="prediction-title">Prediction Result</h3>
+                  </div>
+                </div>
+
+                {isTicketReady && (
+                  <div className="ticket-summary">
+                    <span className="ticket-summary-ticker num">{ticker}</span>
+                    <span className="ticket-summary-text">
+                      {selectedPlayer.full_name} <strong className="num">{bettingLine}</strong>{' '}
+                      {category} vs {selectedOpponent.abbreviation}
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleRunPrediction}
+                  className="btn btn-primary btn-block"
+                  disabled={loading || !isTicketReady}
+                >
+                  {loading ? 'Pricing market…' : 'Price this market'}
+                </button>
+              </section>
+
+              {/* --- Right: the priced market -------------------------- */}
+              <section className="market-result">
+                {loading ? (
+                  <div className="pricing-panel market-surface">
+                    <span className="label-micro">Pricing</span>
+                    <div className="pricing-headline">Running the model</div>
+                    <p className="pricing-note">
+                      Fetching game logs, building features and training the ensemble.
+                      This usually takes 30–90 seconds.
+                    </p>
+                    <div className="progress-bar-container">
+                      <div className="progress-bar" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="pricing-percent num">{progress}%</div>
+                  </div>
+                ) : prediction ? (
+                  <>
+                    <PredictionScorecard
+                      prediction={prediction}
+                      category={category}
+                      bettingLine={bettingLine}
+                      teamColor={accent}
+                    />
+
+                    <div className="panel market-surface">
+                      <div className="panel-head">
+                        <h3 className="panel-title">Form</h3>
+                        <span className="label-micro">Season · Last 10 · H2H</span>
                       </div>
-                      <div className="h2h-table">
-                        <h4>Head-to-Head Matchups vs. {selectedOpponent?.abbreviation || 'Opponent'}:</h4>
-                        {prediction.h2h_list && prediction.h2h_list.length > 0 ? (
-                          <table style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>
+                      <PlayerAveragesChart
+                        category={category}
+                        seasonAverage={sumCategory(prediction.player_averages?.season_averages, category)}
+                        recentAverage={sumCategory(prediction.player_averages?.recent_averages, category)}
+                        h2hAverage={h2hAverage}
+                        opponentAbbr={selectedOpponent?.abbreviation || 'OPP'}
+                        bettingLine={parseFloat(bettingLine)}
+                        teamColor={accent}
+                      />
+                    </div>
+
+                    <div className="panel market-surface">
+                      <div className="panel-head">
+                        <h3 className="panel-title">
+                          Matchup vs {selectedOpponent?.abbreviation || 'OPP'}
+                        </h3>
+                        <span className="label-micro">Opponent last 10</span>
+                      </div>
+                      <div className="statbars">
+                        {['PTS', 'REB', 'AST', 'BLK', 'STL'].map(stat => (
+                          <StatMiniBar
+                            key={stat}
+                            stat={stat}
+                            value={prediction.opp_averages?.[stat] ?? 0}
+                            category={category}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="panel market-surface">
+                      <div className="panel-head">
+                        <h3 className="panel-title">
+                          Head-to-head vs {selectedOpponent?.abbreviation || 'OPP'}
+                        </h3>
+                        <span className="label-micro">
+                          {prediction.h2h_list?.length || 0} games
+                        </span>
+                      </div>
+                      {prediction.h2h_list && prediction.h2h_list.length > 0 ? (
+                        <div className="table-scroll">
+                          <table className="data-table">
                             <thead>
                               <tr>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>Date</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>Matchup</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>PTS</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>REB</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>AST</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>BLK</th>
-                                <th style={{ backgroundColor: selectedPlayer.team_color || '#3EB489', borderColor: selectedPlayer.team_color || '#3EB489' }}>STL</th>
+                                <th>Date</th>
+                                <th>Matchup</th>
+                                <th className="ta-right">PTS</th>
+                                <th className="ta-right">REB</th>
+                                <th className="ta-right">AST</th>
+                                <th className="ta-right">BLK</th>
+                                <th className="ta-right">STL</th>
+                                <th className="ta-right">{ticker || 'TOT'}</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {prediction.h2h_list.map((game, index) => (
-                                <tr key={index}>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.Game_Date}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.Matchup}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.PTS.toFixed(1)}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.REB.toFixed(1)}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.AST.toFixed(1)}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.BLK.toFixed(1)}</td>
-                                  <td style={{ borderColor: selectedPlayer.team_color || '#3EB489' }}>{game.STL.toFixed(1)}</td>
-                                </tr>
-                              ))}
+                              {prediction.h2h_list.map((game, index) => {
+                                const total = sumCategory(game, category);
+                                const line = parseFloat(bettingLine);
+                                const hit = Number.isFinite(line) ? total > line : null;
+                                return (
+                                  <tr key={index}>
+                                    <td>{game.Game_Date}</td>
+                                    <td>{game.Matchup}</td>
+                                    <td className="ta-right num">{game.PTS.toFixed(0)}</td>
+                                    <td className="ta-right num">{game.REB.toFixed(0)}</td>
+                                    <td className="ta-right num">{game.AST.toFixed(0)}</td>
+                                    <td className="ta-right num">{game.BLK.toFixed(0)}</td>
+                                    <td className="ta-right num">{game.STL.toFixed(0)}</td>
+                                    <td className={`ta-right num cell-total ${hit === null ? '' : hit ? 'over' : 'under'}`}>
+                                      {total.toFixed(1)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
-                        ) : (
-                          <p>No head-to-head data available</p>
-                        )}
-                      </div>
-                      <div className="prediction-outcome">
-                        <PlayerAveragesChart
-                          category={category}
-                          seasonAverage={(() => {
-                            if (category === 'Points+Rebounds+Assists') {
-                              return (prediction.player_averages.season_averages.PTS || 0) + 
-                                     (prediction.player_averages.season_averages.REB || 0) + 
-                                     (prediction.player_averages.season_averages.AST || 0);
-                            } else if (category === 'Rebounds+Assists') {
-                              return (prediction.player_averages.season_averages.REB || 0) + 
-                                     (prediction.player_averages.season_averages.AST || 0);
-                            } else if (category === 'Points+Rebounds') {
-                              return (prediction.player_averages.season_averages.PTS || 0) + 
-                                     (prediction.player_averages.season_averages.REB || 0);
-                            } else if (category === 'Points+Assists') {
-                              return (prediction.player_averages.season_averages.PTS || 0) + 
-                                     (prediction.player_averages.season_averages.AST || 0);
-                            } else if (category === 'Blocks+Steals') {
-                              return (prediction.player_averages.season_averages.BLK || 0) + 
-                                     (prediction.player_averages.season_averages.STL || 0);
-                            } else {
-                              return prediction.player_averages.season_averages[category === 'Points' ? 'PTS' : category === 'Rebounds' ? 'REB' : category === 'Assists' ? 'AST' : category === 'Blocks' ? 'BLK' : category === 'Steals' ? 'STL' : 'PTS'] || 0;
-                            }
-                          })()}
-                          recentAverage={(() => {
-                            if (category === 'Points+Rebounds+Assists') {
-                              return (prediction.player_averages.recent_averages.PTS || 0) + 
-                                     (prediction.player_averages.recent_averages.REB || 0) + 
-                                     (prediction.player_averages.recent_averages.AST || 0);
-                            } else if (category === 'Rebounds+Assists') {
-                              return (prediction.player_averages.recent_averages.REB || 0) + 
-                                     (prediction.player_averages.recent_averages.AST || 0);
-                            } else if (category === 'Points+Rebounds') {
-                              return (prediction.player_averages.recent_averages.PTS || 0) + 
-                                     (prediction.player_averages.recent_averages.REB || 0);
-                            } else if (category === 'Points+Assists') {
-                              return (prediction.player_averages.recent_averages.PTS || 0) + 
-                                     (prediction.player_averages.recent_averages.AST || 0);
-                            } else if (category === 'Blocks+Steals') {
-                              return (prediction.player_averages.recent_averages.BLK || 0) + 
-                                     (prediction.player_averages.recent_averages.STL || 0);
-                            } else {
-                              return prediction.player_averages.recent_averages[category === 'Points' ? 'PTS' : category === 'Rebounds' ? 'REB' : category === 'Assists' ? 'AST' : category === 'Blocks' ? 'BLK' : category === 'Steals' ? 'STL' : 'PTS'] || 0;
-                            }
-                          })()}
-                          h2hAverage={prediction.h2h_list && prediction.h2h_list.length > 0 ? 
-                            prediction.h2h_list.reduce((sum, game) => {
-                              let gameValue = 0;
-                              if (category === 'Points+Rebounds+Assists') {
-                                gameValue = game.PTS + game.REB + game.AST;
-                              } else if (category === 'Rebounds+Assists') {
-                                gameValue = game.REB + game.AST;
-                              } else if (category === 'Points+Rebounds') {
-                                gameValue = game.PTS + game.REB;
-                              } else if (category === 'Points+Assists') {
-                                gameValue = game.PTS + game.AST;
-                              } else if (category === 'Blocks+Steals') {
-                                gameValue = game.BLK + game.STL;
-                              } else {
-                                gameValue = category === 'Points' ? game.PTS : category === 'Rebounds' ? game.REB : category === 'Assists' ? game.AST : category === 'Blocks' ? game.BLK : category === 'Steals' ? game.STL : 0;
-                              }
-                              return sum + gameValue;
-                            }, 0) / prediction.h2h_list.length : 0}
-                          opponentAbbr={selectedOpponent?.abbreviation || 'Opponent'}
-                          bettingLine={parseFloat(bettingLine)}
-                          teamColor={selectedPlayer.team_color || '#3EB489'}
-                        />
-                      </div>
-                      <div className="prediction-outcome">
-                        <div className="prediction-value">
-                          {(() => {
-                            const isDefensiveCategory = ['Blocks', 'Steals', 'Blocks+Steals'].includes(category);
-                            return (
-                              <div className="stats-mini-bars">
-                                <StatMiniBar 
-                                  title="Opponent Recent Averages"
-                                  stat="PTS" 
-                                  value={prediction.opp_averages?.PTS ?? 0} 
-                                  category={category}
-                                  isDefensiveCategory={isDefensiveCategory}
-                                />
-                                <StatMiniBar 
-                                  stat="REB" 
-                                  value={prediction.opp_averages?.REB ?? 0} 
-                                  category={category}
-                                  isDefensiveCategory={isDefensiveCategory}
-                                />
-                                <StatMiniBar 
-                                  stat="AST" 
-                                  value={prediction.opp_averages?.AST ?? 0} 
-                                  category={category}
-                                  isDefensiveCategory={isDefensiveCategory}
-                                />
-                                <StatMiniBar 
-                                  stat="BLK" 
-                                  value={prediction.opp_averages?.BLK ?? 0} 
-                                  category={category}
-                                  isDefensiveCategory={isDefensiveCategory}
-                                />
-                                <StatMiniBar 
-                                  stat="STL" 
-                                  value={prediction.opp_averages?.STL ?? 0} 
-                                  category={category}
-                                  isDefensiveCategory={isDefensiveCategory}
-                                />
-                              </div>
-                            );
-                          })()}
                         </div>
-                      </div>
-                      <div className="prediction-outcome">
-                        <PredictionScorecard
-                          prediction={prediction}
-                          category={category}
-                          bettingLine={bettingLine}
-                          teamColor={selectedPlayer.team_color || '#3EB489'}
-                        />
-                      </div>
-                      <div className="save-prediction-section">
-                        <button 
-                          onClick={handleSavePrediction}
-                          className="save-prediction-button"
-                          style={{ 
-                            backgroundColor: selectedPlayer.team_color || '#3EB489',
-                            color: '#181A20'
-                          }}
-                        >
-                          Save Prediction
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              )}
+                      ) : (
+                        <p className="panel-empty">No head-to-head data available.</p>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={handleSavePrediction}
+                      className="btn btn-secondary btn-block"
+                    >
+                      Add to positions
+                    </button>
+                  </>
+                ) : (
+                  <div className="empty-state empty-state-inline">
+                    <div className="empty-icon" aria-hidden="true">⌁</div>
+                    <h3>Market not priced</h3>
+                    <p>
+                      {isTicketReady
+                        ? 'Ready to go — hit “Price this market”.'
+                        : 'Choose a market, line and opponent to enable pricing.'}
+                    </p>
+                  </div>
+                )}
+              </section>
             </div>
-          </div>
-        </div>
+          )}
+        </main>
       )}
     </div>
   );

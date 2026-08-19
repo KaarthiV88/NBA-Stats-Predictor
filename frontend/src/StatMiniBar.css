@@ -1,0 +1,77 @@
+/* Matchup-strength rows: name, rating bar, verdict, value.
+   Grid columns are fixed so every row's numbers align into a column. */
+
+.statbar-group + .statbar-group .statbar-row {
+  border-top: 1px solid var(--border);
+}
+
+.statbar-title {
+  margin-bottom: 8px;
+}
+
+.statbar-row {
+  display: grid;
+  grid-template-columns: 74px 1fr 56px 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.statbar-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.statbar-track {
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.statbar-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.statbar-rating {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.statbar-value {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  color: var(--text);
+}
+
+/* Rating ramp -- red through the app's mint green */
+.statbar-poor .statbar-fill { background: #ef4444; }
+.statbar-poor .statbar-rating { color: #ef4444; }
+
+.statbar-weak .statbar-fill { background: #f97316; }
+.statbar-weak .statbar-rating { color: #f97316; }
+
+.statbar-neutral .statbar-fill { background: #eab308; }
+.statbar-neutral .statbar-rating { color: #eab308; }
+
+.statbar-good .statbar-fill { background: #a3d94a; }
+.statbar-good .statbar-rating { color: #a3d94a; }
+
+.statbar-great .statbar-fill { background: var(--accent); }
+.statbar-great .statbar-rating { color: var(--accent); }
+
+@media (max-width: 560px) {
+  .statbar-row {
+    grid-template-columns: 62px 1fr 40px;
+  }
+
+  .statbar-rating {
+    display: none;
+  }
+}

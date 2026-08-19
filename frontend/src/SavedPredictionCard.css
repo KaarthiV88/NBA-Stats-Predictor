@@ -1,165 +1,132 @@
-.saved-prediction-card {
-  background-color: #23242A;
-  border: 2px solid;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-  min-width: 450px;
-  max-width: 100%;
-  width: 100%;
-  margin: 0 1%; /* Consistent margin to ensure a gap */
-  box-sizing: border-box;
-  overflow: hidden;
+/* A single saved position */
+
+.position-card {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 18px;
+  border-top: 2px solid var(--accent-team, var(--accent));
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
 
-.saved-prediction-card:hover {
+.position-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  border-color: var(--border-strong);
+  border-top-color: var(--accent-team, var(--accent));
 }
 
-.saved-card-header {
+/* --- Header ------------------------------------------------------------- */
+
+.position-head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 20px;
+  align-items: center;
+  gap: 14px;
 }
 
-.saved-player-info {
-  display: flex;
-  align-items: flex-start;
-  gap: 15px;
-  flex: 1;
-}
-
-.saved-player-image-container {
+/* Mirrors the market ticket's portrait treatment, at a size that suits a
+   card in a grid rather than a full-width column. */
+.position-portrait {
+  position: relative;
+  width: 104px;
+  height: 96px;
   flex-shrink: 0;
-}
-
-.saved-player-image {
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-  border: 4px solid;
-  object-fit: cover;
-  transition: transform 0.3s ease;
-}
-
-.saved-player-image:hover {
-  transform: scale(1.05);
-}
-
-.saved-player-details {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.saved-player-name {
-  font-size: 1.8em;
-  font-weight: bold;
-  margin: 0 0 15px 0;
-}
-
-.saved-player-info-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  font-size: 0.9em;
-  color: #d1d5db;
-  margin-bottom: 15px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(125% 95% at 50% 8%,
+      color-mix(in srgb, var(--accent-team, var(--accent)) 42%, transparent),
+      transparent 70%),
+    var(--surface-2);
 }
 
-.saved-player-info-item {
+.position-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+}
+
+.position-identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.position-name {
+  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.position-contract {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.saved-player-info-label {
-  font-weight: 600;
-  color: #9ca3af;
-  min-width: 60px;
-}
-
-.saved-player-info-value {
-  color: #ffffff;
-}
-
-.saved-bet-details {
-  display: flex;
+  gap: 7px;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 8px;
+  font-size: 12px;
 }
 
-.saved-bet-category,
-.saved-bet-line,
-.saved-opponent,
-.saved-season-type {
-  font-size: 0.9em;
-  color: #FFFFFF;
+.position-ticker {
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-.saved-date {
-  font-size: 0.8em;
-  color: #9ca3af;
-  font-style: italic;
+.position-line {
+  font-weight: 700;
+  color: var(--text);
 }
 
-.delete-button {
-  background-color: #dc2626;
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 30px;
-  height: 30px;
-  font-size: 18px;
-  font-weight: bold;
+.position-vs {
+  color: var(--text-muted);
+}
+
+.position-delete {
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.position-delete:hover {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+/* --- Tags --------------------------------------------------------------- */
+
+.position-tags {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: background-color 0.3s ease;
-  flex-shrink: 0;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.delete-button:hover {
-  background-color: #b91c1c;
-}
-
-.saved-prediction-result {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-@media (max-width: 1200px) {
-  .saved-prediction-card {
-    min-width: 0;
-    max-width: 100%;
-    margin: 0 0 20px 0;
-  }
-}
-
-@media (max-width: 768px) {
-  .saved-card-header {
-    flex-direction: column;
-    gap: 15px;
-  }
-  
-  .saved-player-info {
-    flex-direction: column;
-    text-align: center;
-  }
-  
-  .saved-bet-details {
-    justify-content: center;
-  }
-  
-  .delete-button {
-    align-self: flex-end;
-  }
+.position-date {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
 }

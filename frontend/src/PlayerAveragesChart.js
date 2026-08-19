@@ -23,6 +23,8 @@ ChartJS.register(
   annotationPlugin
 );
 
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
 const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverage, opponentAbbr, bettingLine, teamColor = '#3EB489' }) => {
   const validSeasonAverage = typeof seasonAverage === 'number' && !isNaN(seasonAverage) ? seasonAverage : 0;
   const validRecentAverage = typeof recentAverage === 'number' && !isNaN(recentAverage) ? recentAverage : 0;
@@ -67,28 +69,29 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
     maintainAspectRatio: false,
     plugins: {
       legend: { display: false },
-      title: {
-        display: true,
-        text: `Player Averages for ${category}`,
-        color: '#fff',
-        font: {
-          size: 28,
-          weight: 'bold',
-        },
-        padding: { top: 10, bottom: 16 },
-      },
+      // The surrounding panel supplies the heading, so the chart itself stays
+      // chrome-free and dense.
+      title: { display: false },
       datalabels: {
         color: '#fff',
         anchor: 'center',
         align: 'center',
         font: {
-          weight: 'bold',
-          size: 16,
+          weight: '700',
+          size: 13,
+          family: MONO,
         },
         formatter: (value) => value.toFixed(1),
       },
       tooltip: {
         enabled: true,
+        backgroundColor: '#2A2D35',
+        borderColor: 'rgba(255,255,255,0.14)',
+        borderWidth: 1,
+        titleFont: { size: 12 },
+        bodyFont: { size: 12, family: MONO },
+        padding: 9,
+        displayColors: false,
         callbacks: {
           label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(1)}`,
         },
@@ -100,19 +103,20 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
             yMin: validBettingLine,
             yMax: validBettingLine,
             borderColor: '#eab308',
-            borderWidth: 3,
-            borderDash: [6, 6],
+            borderWidth: 2,
+            borderDash: [5, 5],
             label: {
               display: true,
-              content: 'Betting Line',
+              content: `Line ${validBettingLine}`,
               color: '#eab308',
               font: {
-                size: 14,
-                weight: 'bold',
+                size: 11,
+                weight: '700',
+                family: MONO,
               },
               position: 'start',
-              backgroundColor: 'rgba(0,0,0,0.7)',
-              padding: 6,
+              backgroundColor: 'rgba(24,26,32,0.9)',
+              padding: 5,
             },
           },
         },
@@ -121,27 +125,23 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
     scales: {
       y: {
         beginAtZero: true,
+        border: { display: false },
         grid: {
-          color: 'rgba(255,255,255,0.15)',
+          color: 'rgba(255,255,255,0.06)',
         },
         ticks: {
-          color: '#fff',
-          font: {
-            size: 15,
-            weight: 'bold',
-          },
+          color: '#9ca3af',
+          font: { size: 11, family: MONO },
+          padding: 6,
         },
       },
       x: {
-        grid: {
-          color: 'rgba(255,255,255,0.10)',
-        },
+        border: { display: false },
+        grid: { display: false },
         ticks: {
-          color: '#fff',
-          font: {
-            size: 15,
-            weight: 'bold',
-          },
+          color: '#9ca3af',
+          font: { size: 11, weight: '600' },
+          padding: 4,
         },
       },
     },
@@ -160,8 +160,8 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
         data: [validSeasonAverage, validRecentAverage, validH2hAverage],
         backgroundColor: barColors,
         borderColor: borderColors,
-        borderWidth: 2,
-        borderRadius: 8,
+        borderWidth: 1,
+        borderRadius: 5,
         barPercentage: 0.55,
         categoryPercentage: 0.7,
       },
@@ -169,7 +169,7 @@ const PlayerAveragesChart = ({ category, seasonAverage, recentAverage, h2hAverag
   };
 
   return (
-    <div className="chart-container" style={{ width: '100%', height: 320, boxSizing: 'border-box', margin: '0 auto' }}>
+    <div className="chart-container">
       <Bar options={options} data={data} plugins={[ChartDataLabels]} />
     </div>
   );

@@ -5,6 +5,7 @@ from predictive_model import AdvancedNBAPlayerPredictor
 import bet_calculations as bc
 from nba_api.stats.static import players, teams
 import logging
+import os
 import time
 
 # Set up logging
@@ -13,7 +14,15 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}})
+
+# Allowed browser origins. Local dev ports are always permitted; a deployed
+# frontend adds its own origin via ALLOWED_ORIGINS (comma-separated), e.g.
+#   ALLOWED_ORIGINS=https://my-app.vercel.app,https://my-app-git-main.vercel.app
+_DEFAULT_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_extra_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+ALLOWED_ORIGINS = _DEFAULT_ORIGINS + _extra_origins
+CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
+logger.info("CORS allowed origins: %s", ALLOWED_ORIGINS)
 
 # Initialize predictor
 predictor = AdvancedNBAPlayerPredictor()
@@ -133,10 +142,11 @@ def predict():
             logger.error(f"Team not found: {opponent_abbr}")
             return jsonify({"error": f"Team '{opponent_abbr}' not found"}), 404
 
-        # Fetch additional data for prediction, use current season (2025-26) for player averages
-        logger.info(f"Fetching averages for player {player_name} using current season")
+        # Fetch additional data for prediction; player averages come from the
+        # current season, falling back to the previous one inside bet_calculations.
+        logger.info(f"Fetching averages for {player_name} using season {bc.CURRENT_SEASON}")
         h2h_stats, h2h_list = bc.get_head_to_head_stats(player_info['player_id'], opponent_abbr)
-        averages = bc.get_player_season_recent_averages(player_info['player_id'], '2025-26', season_type)
+        averages = bc.get_player_season_recent_averages(player_info['player_id'], bc.CURRENT_SEASON, season_type)
         logger.debug(f"Player averages for {player_name}: {averages}")
 
         result = predictor.predict_over_under(
@@ -164,4 +174,8 @@ def predict():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # PORT is what most hosts inject; default to 5001 to match the frontend's
+    # local fallback. Debug stays off unless explicitly asked for.
+    port = int(os.environ.get("PORT", 5001))
+    debug = os.environ.get("FLASK_DEBUG", "1").lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug)

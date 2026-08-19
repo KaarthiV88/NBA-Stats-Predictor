@@ -1,0 +1,249 @@
+/* Market-style odds card: two priced sides, a split probability bar,
+   and the model numbers behind the quote. */
+
+.scorecard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.scorecard-compact {
+  gap: 11px;
+  padding: 13px;
+}
+
+/* --- Contract line ------------------------------------------------------ */
+
+.scorecard-question {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.scorecard-question-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.scorecard-question-line {
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* --- The book: two opposing sides -------------------------------------- */
+
+.scorecard-book {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.scorecard-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.scorecard-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.scorecard-side-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.scorecard-side-tag {
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.scorecard-side-price {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-muted);
+}
+
+.scorecard-compact .scorecard-side-price {
+  font-size: 22px;
+}
+
+/* Favoured side gets the color and the weight */
+.scorecard-side-over.is-favored {
+  border-color: var(--border-accent);
+  background: var(--over-wash);
+}
+
+.scorecard-side-over.is-favored .scorecard-side-name,
+.scorecard-side-over.is-favored .scorecard-side-price {
+  color: var(--over);
+}
+
+.scorecard-side-over.is-favored .scorecard-side-tag {
+  background: var(--over);
+  color: #0f1115;
+}
+
+.scorecard-side-under.is-favored {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: var(--under-wash);
+}
+
+.scorecard-side-under.is-favored .scorecard-side-name,
+.scorecard-side-under.is-favored .scorecard-side-price {
+  color: var(--under);
+}
+
+.scorecard-side-under.is-favored .scorecard-side-tag {
+  background: var(--under);
+  color: #fff;
+}
+
+/* --- Split probability bar ---------------------------------------------- */
+
+.scorecard-probbar {
+  display: flex;
+  height: 6px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.scorecard-probbar-over {
+  background: var(--over);
+  transition: width 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.scorecard-probbar-under {
+  background: var(--under);
+  opacity: 0.75;
+  transition: width 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.scorecard-probbar-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: -6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scorecard-legend-over {
+  color: var(--over);
+}
+
+.scorecard-legend-under {
+  color: var(--under);
+}
+
+.scorecard-conviction {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* --- Model numbers ------------------------------------------------------ */
+
+.scorecard-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.scorecard-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.scorecard-stat-value {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.scorecard-stat-value.positive {
+  color: var(--over);
+}
+
+.scorecard-stat-value.negative {
+  color: var(--under);
+}
+
+.scorecard-stat-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* --- Readout ------------------------------------------------------------ */
+
+.scorecard-readout {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.scorecard-readout strong {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.scorecard-readout .positive,
+.scorecard-readout strong.over {
+  color: var(--over);
+}
+
+.scorecard-readout .negative,
+.scorecard-readout strong.under {
+  color: var(--under);
+}
+
+@media (max-width: 560px) {
+  .scorecard-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .scorecard-side-price {
+    font-size: 22px;
+  }
+}

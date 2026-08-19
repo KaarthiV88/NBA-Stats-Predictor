@@ -2,164 +2,82 @@ import React from 'react';
 import './SavedPredictionCard.css';
 import PredictionScorecard from './PredictionScorecard';
 
-const SavedPredictionCard = ({ savedPrediction, onDelete, index, total }) => {
-  const { 
-    player, 
-    category, 
-    bettingLine, 
-    opponent, 
-    seasonType, 
-    prediction,
-    savedAt 
-  } = savedPrediction;
+const CATEGORY_TICKER = {
+  'Points': 'PTS',
+  'Rebounds': 'REB',
+  'Assists': 'AST',
+  'Blocks': 'BLK',
+  'Steals': 'STL',
+  'Points+Rebounds+Assists': 'PRA',
+  'Rebounds+Assists': 'RA',
+  'Points+Rebounds': 'PR',
+  'Points+Assists': 'PA',
+  'Blocks+Steals': 'BS'
+};
 
-  // Extract prediction values
-  const predictedValue = (typeof prediction.predicted_value === 'number' && !isNaN(prediction.predicted_value))
-    ? prediction.predicted_value.toFixed(1)
-    : (prediction.message.match(/Predicted [A-Za-z+]+: (\d+\.\d+)/)?.[1] || 'N/A');
-  
-  const confidenceInterval = prediction.confidence_interval || (prediction.message.match(/95% CI: (\d+\.\d+-\d+\.\d+)/)?.[1] || 'N/A');
-  const confidencePercentage = (typeof prediction.confidence === 'number' && !isNaN(prediction.confidence))
-    ? prediction.confidence.toFixed(1)
-    : 'N/A';
-  const betRecommendation = prediction.bet_on?.toUpperCase() || 'N/A';
+const formatDate = (dateString) => {
+  const date = new Date(dateString);
+  if (isNaN(date)) return '—';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+    ' · ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
 
-  // Parse confidence interval for visual display
-  const [lowerBound, upperBound] = confidenceInterval.split('-').map(Number);
-  const isConfidenceValid = !isNaN(lowerBound) && !isNaN(upperBound);
-  const predictedValueNum = parseFloat(predictedValue);
+const SavedPredictionCard = ({ savedPrediction, onDelete }) => {
+  const { player, category, bettingLine, opponent, seasonType, prediction, savedAt } = savedPrediction;
 
-  // Calculate tick position, clamped to [0, 100]
-  let tickPosition = null;
-  if (isConfidenceValid && !isNaN(predictedValueNum)) {
-    if (upperBound === lowerBound) {
-      tickPosition = 50;
-    } else {
-      const raw = ((predictedValueNum - lowerBound) / (upperBound - lowerBound)) * 100;
-      tickPosition = Math.max(0, Math.min(100, raw));
-    }
-  }
-
-  // Create category abbreviation and format
-  const getCategoryDisplay = (cat) => {
-    const categoryMap = {
-      'Points': 'points',
-      'Rebounds': 'rebounds',
-      'Assists': 'assists',
-      'Blocks': 'blocks',
-      'Steals': 'steals',
-      'Points+Rebounds+Assists': 'PRA',
-      'Rebounds+Assists': 'RA',
-      'Points+Rebounds': 'PR',
-      'Points+Assists': 'PA',
-      'Blocks+Steals': 'BS'
-    };
-    return categoryMap[cat] || cat.toLowerCase();
-  };
-
-  const categoryDisplay = getCategoryDisplay(category);
-  const primaryColor = player.team_color || '#3EB489';
-
-  // Format saved date
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  // Removed transform to rely on CSS grid
-  const cardStyle = {
-    display: 'inline-block',
-    margin: '0 1%'
-  };
+  const accent = player?.team_color || '#3EB489';
+  const ticker = CATEGORY_TICKER[category] || category;
+  const side = prediction?.bet_on;
 
   return (
-    <div className="saved-prediction-card" style={{ borderColor: primaryColor, ...cardStyle }}>
-      <div className="saved-card-header">
-        <div className="saved-player-info">
-          <div className="saved-player-image-container">
-            <img
-              src={`https://cdn.nba.com/headshots/nba/latest/1040x760/${player.id}.png?imwidth=1040&imheight=760`}
-              alt={player.full_name}
-              className="saved-player-image"
-              style={{ borderColor: primaryColor }}
-              onError={(e) => { e.target.src = 'https://via.placeholder.com/128'; }}
-            />
-          </div>
-          <div className="saved-player-details">
-            <h3 className="saved-player-name" style={{ color: primaryColor }}>
-              {player.full_name}
-            </h3>
-            <div className="saved-player-info-grid">
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Height:</span>
-                <span className="saved-player-info-value">{player.height || 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Weight:</span>
-                <span className="saved-player-info-value">{player.weight ? `${player.weight} lbs` : 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Jersey:</span>
-                <span className="saved-player-info-value">#{player.jersey || 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Position:</span>
-                <span className="saved-player-info-value">{player.position || 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Team:</span>
-                <span className="saved-player-info-value">{player.team_city && player.team_name ? `${player.team_city} ${player.team_name}` : 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">School:</span>
-                <span className="saved-player-info-value">{player.school || 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Country:</span>
-                <span className="saved-player-info-value">{player.country || 'N/A'}</span>
-              </div>
-              <div className="saved-player-info-item">
-                <span className="saved-player-info-label">Experience:</span>
-                <span className="saved-player-info-value">{player.season_exp ? `${player.season_exp} years` : 'N/A'}</span>
-              </div>
-            </div>
-            <div className="saved-bet-details">
-              <span className="saved-bet-category" style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: '6px', padding: '6px 12px' }}>
-                {category}
-              </span>
-              <span className="saved-bet-line" style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: '6px', padding: '6px 12px' }}>
-                Line: {bettingLine}
-              </span>
-              <span className="saved-opponent" style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: '6px', padding: '6px 12px' }}>
-                vs {opponent.full_name}
-              </span>
-              <span className="saved-season-type" style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', borderRadius: '6px', padding: '6px 12px' }}>
-                {seasonType}
-              </span>
-            </div>
-            <div className="saved-date">
-              Saved: {formatDate(savedAt)}
-            </div>
+    <article
+      className={`position-card market-surface side-${side || 'none'}`}
+      style={{ '--accent-team': accent }}
+    >
+      <header className="position-head">
+        <div className="position-portrait">
+          <img
+            src={`https://cdn.nba.com/headshots/nba/latest/1040x760/${player.id}.png?imwidth=1040&imheight=760`}
+            alt={player.full_name}
+            className="position-avatar"
+            onError={(e) => { e.target.style.visibility = 'hidden'; }}
+          />
+        </div>
+
+        <div className="position-identity">
+          <h3 className="position-name">{player.full_name}</h3>
+          <div className="position-contract">
+            <span className="position-ticker num">{ticker}</span>
+            <span className="position-line num">{bettingLine}</span>
+            <span className="position-vs">vs {opponent?.abbreviation || opponent?.full_name || '—'}</span>
           </div>
         </div>
-        <button 
-          className="delete-button"
+
+        <button
+          className="position-delete"
           onClick={() => onDelete(savedPrediction.id)}
-          style={{ backgroundColor: '#dc2626' }}
+          aria-label={`Remove ${player.full_name} ${category} position`}
+          title="Remove position"
         >
           ×
         </button>
+      </header>
+
+      <div className="position-tags">
+        <span className="chip">{player.team_abbreviation || '—'}</span>
+        <span className="chip">{player.position || '—'}</span>
+        <span className="chip">{seasonType}</span>
+        <span className="position-date">{formatDate(savedAt)}</span>
       </div>
 
-      <div className="saved-prediction-result">
-        <PredictionScorecard
-          prediction={prediction}
-          category={category}
-          bettingLine={bettingLine}
-          teamColor={primaryColor}
-        />
-      </div>
-    </div>
+      <PredictionScorecard
+        prediction={prediction}
+        category={category}
+        bettingLine={bettingLine}
+        teamColor={accent}
+        compact
+      />
+    </article>
   );
 };
 
