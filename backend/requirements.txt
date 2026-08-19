@@ -1,4 +1,4 @@
-# Requires Python 3.12 or 3.13 (see note at bottom -- 3.14 is NOT supported).
+# Requires Python 3.12, 3.13 or 3.14. Verified on 3.13 and 3.14.
 
 # Web server
 flask==3.1.3
@@ -26,8 +26,12 @@ retrying==1.4.2
 gunicorn==23.0.0
 
 # Python version note:
-#   pandas ships no wheels for Python 3.14 below pandas 3.0, and this project's
-#   prediction code is not compatible with pandas 3.x -- under 3.0.5 the
-#   /api/predict route fails in predictive_model.py:218 with
-#   "Invalid value '[...]' for dtype 'float64'". Stay on Python 3.12/3.13
-#   with pandas 2.3.x until that assignment is updated.
+#   Verified working on Python 3.13.5 and 3.14.2, both with pandas 2.3.3
+#   (which ships cp314 wheels). Vercel offers 3.12, 3.13 and 3.14; .python-version
+#   pins 3.13, and you can change it to 3.14 to match a local 3.14 venv.
+#
+#   Stay on the pandas 2.x line. Under pandas 3.0.5 the /api/predict route fails
+#   in predictive_model.py with "Invalid value '[...]' for dtype 'float64'" --
+#   the array assignment in create_features is not valid there. Since pandas 3.0
+#   is the only line with 3.14 wheels for *some* releases, pin the version here
+#   rather than letting pip resolve it.

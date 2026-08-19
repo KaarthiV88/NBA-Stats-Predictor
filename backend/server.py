@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from predictive_model import AdvancedNBAPlayerPredictor
 import bet_calculations as bc
+import nba_source
 from nba_api.stats.static import players, teams
 import logging
 import os
@@ -23,6 +24,10 @@ _extra_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split
 ALLOWED_ORIGINS = _DEFAULT_ORIGINS + _extra_origins
 CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
 logger.info("CORS allowed origins: %s", ALLOWED_ORIGINS)
+
+# Log the data mode up front. In production this must read "snapshot" -- if it
+# says "live", the deployment will hang on stats.nba.com rather than fail loudly.
+logger.info("NBA data source: %s", nba_source.describe())
 
 # Initialize predictor
 predictor = AdvancedNBAPlayerPredictor()
@@ -168,6 +173,17 @@ def predict():
 
         logger.info(f"Prediction successful for {player_name}, category {category}, opponent {opponent_abbr}")
         return jsonify(result)
+
+    except ValueError as e:
+        # Raised when there's no game history to model. In snapshot mode this
+        # most often means the player isn't in the current data snapshot yet --
+        # a real, expected state that deserves a clear message rather than a
+        # generic 500.
+        logger.warning(f"No data to predict for {player_name}: {e}")
+        detail = "No game data available for this player."
+        if nba_source.SNAPSHOT_MODE:
+            detail += " They may not be in the current data snapshot yet."
+        return jsonify({"error": detail}), 503
 
     except Exception as e:
         logger.error(f"Error processing prediction for {player_name}: {str(e)}")

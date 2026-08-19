@@ -11,9 +11,13 @@ const Navbar = ({ currentPage, onPageChange, positionCount = 0 }) => {
     <nav className="navbar">
       <div className="navbar-container">
         <div className="navbar-brand">
-          <span className="navbar-mark" aria-hidden="true" />
+          <img
+            className="navbar-mark"
+            src={`${process.env.PUBLIC_URL}/kv_money_market.jpeg`}
+            alt="KV Money Market"
+          />
           <span className="navbar-wordmark">
-            NBA<span className="navbar-wordmark-accent">Predictor</span>
+            KV <span className="navbar-wordmark-accent">Money Market</span>
           </span>
         </div>
 

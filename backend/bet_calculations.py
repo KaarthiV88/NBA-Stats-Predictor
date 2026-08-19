@@ -1,6 +1,6 @@
 import pandas as pd
-from nba_api.stats.endpoints import playergamelog, leaguedashplayerstats, leaguedashteamstats, teamgamelog, commonplayerinfo
 from nba_api.stats.static import teams, players
+import nba_source
 from joblib import Memory
 import logging
 import os
@@ -97,7 +97,7 @@ def get_combined_stat_value(stats_dict, category):
 def get_player_detailed_info(player_id):
     """Get detailed player information including height, weight, jersey, position, team, school, country."""
     try:
-        player_info = commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_data_frames()[0]
+        player_info = nba_source.player_common_info(player_id)
         if player_info.empty:
             logger.error(f"No detailed info found for player {player_id}")
             return None
@@ -156,21 +156,14 @@ def get_team_id(team_abbr):
 @retry(stop_max_attempt_number=3, wait_fixed=2000)
 def fetch_game_log(player_id, season, season_type):
     """Fetch game log with retries."""
-    return playergamelog.PlayerGameLog(
-        player_id=player_id,
-        season=season,
-        season_type_all_star=season_type,
-        timeout=120
-    ).get_data_frames()[0]
+    return nba_source.player_game_log(player_id, season, season_type)
 
 @retry(stop_max_attempt_number=3, wait_fixed=2000)
 def fetch_advanced_stats(player_id, season, season_type):
     """Fetch advanced stats with retries."""
-    all_stats = leaguedashplayerstats.LeagueDashPlayerStats(
-        season=season,
-        season_type_all_star=season_type,
-        timeout=120
-    ).get_data_frames()[0]
+    all_stats = nba_source.league_player_stats(season, season_type)
+    if all_stats.empty or 'PLAYER_ID' not in all_stats.columns:
+        return all_stats
     # Filter for the specific player
     player_stats = all_stats[all_stats['PLAYER_ID'] == player_id]
     return player_stats
@@ -278,57 +271,78 @@ def get_head_to_head_stats(player_id, opponent_abbr, seasons=SEASONS):
     logger.debug(f"H2H games for {player_id} vs {opponent_abbr}: {len(h2h_list)}")
     return h2h_stats, h2h_list
 
+# Fallback league baselines, used only when a season's tables are unavailable.
+# Roughly league-typical per-game figures.
+_LEAGUE_FALLBACK = {'PTS': 113.0, 'REB': 32.5, 'AST': 26.0, 'BLK': 4.8, 'STL': 7.5}
+
+
 @cache.cache
 def get_league_defensive_averages(season, season_type):
-    """Get league-wide defensive averages."""
+    """League-wide per-game defensive baselines, one value per stat.
+
+    These are denominators for opp_strength_{stat}, so they must be on the same
+    per-game scale as the numerators in predictive_model.fetch_all_team_stats.
+
+    Two things make this less direct than it looks:
+
+    1. The Defense measure reports DREB/BLK/STL as *season totals*, not
+       per-game. Dividing by GP is mandatory -- without it the baseline is ~82x
+       too large and every opp_strength_* collapses to about 0.012.
+    2. The Defense measure carries no opponent points or assists at all. Those
+       live in the Opponent measure, which is fetched separately.
+    """
+    avgs = {}
+
+    # --- Opponent points and assists allowed, per game ---
     try:
-        stats = leaguedashteamstats.LeagueDashTeamStats(
-            season=season,
-            season_type_all_star=season_type,
-            measure_type_detailed_defense='Defense',
-            timeout=120
-        ).get_data_frames()[0]
-        logger.info(f"Available columns in team stats for {season}: {stats.columns.tolist()}")
-        
-        column_mapping = {
-            'PTS': ['OPP_PTS', 'OPP_PTS_PG', 'OPP_POINTS', 'OPP_PTS_PER_GAME'],
-            'REB': ['DREB', 'OPP_REB', 'OPP_REB_PG', 'OPP_REB_PER_GAME'],
-            'AST': ['OPP_AST', 'OPP_AST_PG', 'OPP_ASSISTS', 'OPP_AST_PER_GAME'],
-            'BLK': ['BLK', 'BLK_PG', 'BLOCKS', 'BLK_PER_GAME'],
-            'STL': ['STL', 'STL_PG', 'STEALS', 'STL_PER_GAME']
-        }
-        
-        avgs = {}
-        for stat, possible_cols in column_mapping.items():
-            found_col = None
-            for col in possible_cols:
-                if col in stats.columns:
-                    found_col = col
-                    break
-            
-            if found_col:
-                avgs[stat] = stats[found_col].mean()
-                logger.debug(f"Using column '{found_col}' for {stat}")
-            else:
-                logger.warning(f"No column found for {stat} in {season}, using default. Available columns: {[col for col in stats.columns if stat.lower() in col.lower() or 'opp' in col.lower()]}")
-                avgs[stat] = {'PTS': 110.0, 'REB': 43.0, 'AST': 25.0, 'BLK': 5.0, 'STL': 7.0}.get(stat)
-        
-        logger.debug(f"League averages for {season}: {avgs}")
-        return avgs
-    except Exception as e:
-        logger.error(f"Error fetching league averages for {season}: {e}")
-        return {'PTS': 110.0, 'REB': 43.0, 'AST': 25.0, 'BLK': 5.0, 'STL': 7.0}
+        opp = nba_source.league_opponent_stats(season, season_type)
+    except Exception as exc:
+        logger.warning("Opponent table unavailable for %s: %s", season, exc)
+        opp = pd.DataFrame()
+
+    if not opp.empty:
+        games = opp['GP'].replace(0, pd.NA) if 'GP' in opp.columns else None
+        for stat, candidates in (('PTS', ('OPP_PTS',)), ('AST', ('OPP_AST',))):
+            col = next((c for c in candidates if c in opp.columns), None)
+            if col is None:
+                continue
+            series = opp[col]
+            # The Opponent table reports totals when a full season is requested;
+            # normalise whenever the magnitude clearly isn't per-game.
+            if games is not None and series.mean() > 400:
+                series = series / games
+            avgs[stat] = float(series.mean())
+
+    # --- The defending team's own counting stats, per game ---
+    try:
+        stats = nba_source.league_team_stats(season, season_type)
+    except Exception as exc:
+        logger.warning("Defense table unavailable for %s: %s", season, exc)
+        stats = pd.DataFrame()
+
+    if not stats.empty and 'GP' in stats.columns:
+        games = stats['GP'].replace(0, pd.NA)
+        for stat, col in (('REB', 'DREB'), ('BLK', 'BLK'), ('STL', 'STL')):
+            if col in stats.columns:
+                avgs[stat] = float((stats[col] / games).mean())
+
+    # --- Anything still missing falls back, loudly ---
+    for stat, default in _LEAGUE_FALLBACK.items():
+        value = avgs.get(stat)
+        if value is None or not pd.notna(value) or value <= 0:
+            logger.warning("No league baseline for %s in %s; using %.1f", stat, season, default)
+            avgs[stat] = default
+
+    logger.info("League per-game baselines %s: %s",
+                season, {k: round(v, 2) for k, v in avgs.items()})
+    return avgs
+
 
 @cache.cache
 def get_team_recent_stats(team_id, season, season_type, measure_type, num_games=10):
     """Get recent team stats (per-game averages for last num_games)."""
     try:
-        gamelog = teamgamelog.TeamGameLog(
-            team_id=team_id,
-            season=season,
-            season_type_all_star=season_type,
-            timeout=120
-        ).get_data_frames()[0]
+        gamelog = nba_source.team_game_log(team_id, season, season_type)
         if gamelog.empty:
             logger.warning(f"No game log data for team {team_id}, season {season}")
             raise ValueError("Empty game log")

@@ -31,11 +31,12 @@
 }
 
 .navbar-mark {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent-bright), var(--accent-dim));
-  box-shadow: 0 0 12px rgba(62, 180, 137, 0.5);
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(62, 180, 137, 0.35);
 }
 
 .navbar-wordmark {

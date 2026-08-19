@@ -112,3 +112,6 @@ venv/
 
 # joblib disk cache for NBA API responses
 backend/bet_cache/
+
+# Half-written snapshot files from an interrupted build
+backend/data/**/*.tmp

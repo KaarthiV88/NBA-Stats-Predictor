@@ -2,9 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "server.py": {
-      "memory": 3009,
       "maxDuration": 300,
-      "excludeFiles": "{bet_cache/**,__pycache__/**,**/*.pyc,libomp.dylib,server_test.py,PP_AI.py,venv/**,.venv/**}"
+      "excludeFiles": "{bet_cache/**,__pycache__/**,**/*.pyc,libomp.dylib,server_test.py,PP_AI.py,build_snapshot.py,venv/**,.venv/**}"
     }
   }
 }

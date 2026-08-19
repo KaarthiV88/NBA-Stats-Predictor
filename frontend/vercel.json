@@ -3,9 +3,6 @@
   "framework": "create-react-app",
   "buildCommand": "npm run build",
   "outputDirectory": "build",
-  "rewrites": [
-    { "source": "/((?!static/).*)", "destination": "/index.html" }
-  ],
   "headers": [
     {
       "source": "/static/(.*)",

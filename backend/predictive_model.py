@@ -8,8 +8,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from scipy.stats import norm
 from scipy.sparse import csr_matrix
-from nba_api.stats.endpoints import leaguedashteamstats
 import bet_calculations as bc
+import nba_source
 import logging
 from joblib import Parallel, delayed
 import hashlib
@@ -73,13 +73,7 @@ class AdvancedNBAPlayerPredictor:
         for season in seasons:
             for st in ['Regular Season', 'Playoffs']:
                 try:
-                    gamelog = bc.playergamelog.PlayerGameLog(
-                        player_id=player_id,
-                        season=season,
-                        season_type_all_star=st,
-                        timeout=60
-                    )
-                    df = gamelog.get_data_frames()[0]
+                    df = nba_source.player_game_log(player_id, season, st)
                     df['SEASON'] = season
                     df['SEASON_TYPE'] = st
                     game_logs.append(df)
@@ -109,13 +103,9 @@ class AdvancedNBAPlayerPredictor:
         for season in seasons:
             if (season, season_type) not in self.opponent_stats_cache:
                 try:
-                    team_stats = leaguedashteamstats.LeagueDashTeamStats(
-                        season=season,
-                        season_type_all_star=season_type,
-                        measure_type_detailed_defense='Defense',
-                        last_n_games='82',
-                        timeout=60
-                    ).get_data_frames()[0]
+                    team_stats = nba_source.league_team_stats(
+                        season, season_type, last_n_games='82'
+                    )
                     for _, row in team_stats.iterrows():
                         team_id = row['TEAM_ID']
                         games_played = row.get('GP', 82)
