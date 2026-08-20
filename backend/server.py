@@ -8,6 +8,7 @@ from nba_api.stats.static import players, teams
 import logging
 import os
 import time
+from urllib.parse import unquote
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +82,10 @@ def get_teams():
 def get_player_details(player_name):
     """API endpoint to get detailed player information."""
     try:
+        # Some hosts hand WSGI a path that has not been percent-decoded, so a
+        # name like "Stephen%20Curry" arrives with the escape intact and never
+        # matches. Decoding here is a no-op when the server already did it.
+        player_name = unquote(player_name)
         player_info = bc.get_player_id(player_name)
         if not player_info:
             logger.error(f"Player not found: {player_name}")
