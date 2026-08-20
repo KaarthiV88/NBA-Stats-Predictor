@@ -37,7 +37,25 @@ predictor = AdvancedNBAPlayerPredictor()
 def health_check():
     """Health check endpoint to confirm API is running."""
     logger.info("Accessed health check endpoint")
-    return jsonify({"status": "healthy", "message": "NBA Betting Predictor API is running", "timestamp": time.time()})
+    # Report the data mode. Misconfiguring this is invisible otherwise: the
+    # offline endpoints keep working while anything needing player data hangs
+    # against stats.nba.com, which drops datacenter traffic instead of refusing
+    # it. Surfacing it here turns a 90-second timeout into a glance.
+    snapshot_meta = {}
+    if nba_source.SNAPSHOT_MODE:
+        meta = nba_source._read_json(nba_source.SNAPSHOT_DIR / 'meta.json') or {}
+        snapshot_meta = {
+            "built_at": meta.get("built_at"),
+            "player_count": meta.get("player_count"),
+            "seasons": meta.get("seasons"),
+        }
+    return jsonify({
+        "status": "healthy",
+        "message": "NBA Betting Predictor API is running",
+        "timestamp": time.time(),
+        "data_source": "snapshot" if nba_source.SNAPSHOT_MODE else "live",
+        "snapshot": snapshot_meta,
+    })
 
 @app.route('/favicon.ico', methods=['GET'])
 def favicon():
