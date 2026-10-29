@@ -57,6 +57,16 @@ def health_check():
         "snapshot": snapshot_meta,
     })
 
+@app.route('/api/data-status', methods=['GET'])
+def data_status():
+    """How current the snapshot is, for the "Data through" figure in the UI."""
+    meta = nba_source._read_json(nba_source.SNAPSHOT_DIR / 'meta.json') or {}
+    return jsonify({
+        "built_at": meta.get("built_at"),
+        "latest_game_date": meta.get("latest_game_date"),
+        "seasons": meta.get("seasons"),
+    })
+
 @app.route('/favicon.ico', methods=['GET'])
 def favicon():
     """Return empty response for favicon requests."""

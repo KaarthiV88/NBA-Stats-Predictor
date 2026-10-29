@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 # gives the model enough history to train on while keeping every sample recent
 # enough to reflect current rosters, rotations and pace. Anything older is
 # deliberately excluded rather than used as a deep fallback.
-CURRENT_SEASON = '2025-26'
-PREVIOUS_SEASON = '2024-25'
+CURRENT_SEASON = '2026-27'
+PREVIOUS_SEASON = '2025-26'
 
 # Chronological order (oldest first) -- used for training/H2H windows.
 SEASONS = (PREVIOUS_SEASON, CURRENT_SEASON)
@@ -23,6 +23,12 @@ SEASONS = (PREVIOUS_SEASON, CURRENT_SEASON)
 # Most-recent-first -- used when looking for the freshest data available and
 # falling back only "as needed".
 SEASONS_BY_RECENCY = (CURRENT_SEASON, PREVIOUS_SEASON)
+
+# Early in a season the current log is too thin to average over, so
+# season-level and recent-form figures overflow into last season's most recent
+# games until they reach these sample sizes.
+MIN_SEASON_GAMES = 20
+MIN_RECENT_GAMES = 10
 
 # Cache for API calls.
 #
@@ -168,22 +174,50 @@ def fetch_advanced_stats(player_id, season, season_type):
     player_stats = all_stats[all_stats['PLAYER_ID'] == player_id]
     return player_stats
 
+def overflow_game_log(fetch, season, season_type, min_games):
+    """Game log for `season`, topped up from earlier seasons to `min_games`.
+
+    `fetch(season, season_type)` returns one season's log. All of `season` is
+    kept; only when it holds fewer than `min_games` are the most recent games
+    of the season before it appended. The result is newest first and carries
+    SEASON and a parsed _game_dt column.
+    """
+    start = SEASONS_BY_RECENCY.index(season) if season in SEASONS_BY_RECENCY else 0
+    frames = []
+    have = 0
+    for s in SEASONS_BY_RECENCY[start:]:
+        if have >= min_games:
+            break
+        try:
+            gl = fetch(s, season_type)
+        except Exception as e:
+            logger.warning(f"Error fetching game log for season {s}: {e}")
+            continue
+        if gl is None or gl.empty:
+            continue
+        gl = gl.copy()
+        gl['SEASON'] = s
+        gl['_game_dt'] = pd.to_datetime(gl['GAME_DATE'], format='mixed', errors='coerce')
+        gl = gl.sort_values('_game_dt', ascending=False, na_position='last')
+        if frames:
+            gl = gl.head(min_games - have)
+        frames.append(gl)
+        have += len(gl)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
 @cache.cache
 def get_player_season_recent_averages(player_id, season, season_type, recent_n=10):
     """Get season, recent game, and season-long averages for a player across all stats."""
     logger.info(f"Fetching averages for player_id: {player_id}, season: {season}, season_type: {season_type}")
     try:
-        seasons_to_try = SEASONS_BY_RECENCY
-        gamelog = None
-        for s in seasons_to_try:
-            try:
-                gamelog = fetch_game_log(player_id, s, season_type)
-                if not gamelog.empty:
-                    break
-            except Exception as e:
-                logger.warning(f"Error fetching game log for player {player_id}, season {s}: {e}")
-        if gamelog is None or gamelog.empty:
-            logger.error(f"No valid game log data for player {player_id} across seasons {seasons_to_try}")
+        gamelog = overflow_game_log(
+            lambda s, st: fetch_game_log(player_id, s, st),
+            season, season_type, max(MIN_SEASON_GAMES, recent_n),
+        )
+        if gamelog.empty:
+            logger.error(f"No valid game log data for player {player_id} across seasons {SEASONS_BY_RECENCY}")
             return {
                 'season_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
                 'recent_averages': {'PTS': 0.0, 'REB': 0.0, 'AST': 0.0, 'BLK': 0.0, 'STL': 0.0, 'DEF_RATING': 110.0},
@@ -193,8 +227,8 @@ def get_player_season_recent_averages(player_id, season, season_type, recent_n=1
         # Calculate season-long averages
         season_long_avgs = gamelog[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
 
-        # Calculate recent averages (last 10 games)
-        recent_games = gamelog.sort_values('GAME_DATE', ascending=False).head(recent_n)
+        # Calculate recent averages (last 10 games); gamelog is already newest first
+        recent_games = gamelog.head(recent_n)
         recent_avgs = recent_games[['PTS', 'REB', 'AST', 'BLK', 'STL']].mean().to_dict()
 
         # Add combined stats for both season and recent
@@ -342,7 +376,10 @@ def get_league_defensive_averages(season, season_type):
 def get_team_recent_stats(team_id, season, season_type, measure_type, num_games=10):
     """Get recent team stats (per-game averages for last num_games)."""
     try:
-        gamelog = nba_source.team_game_log(team_id, season, season_type)
+        gamelog = overflow_game_log(
+            lambda s, st: nba_source.team_game_log(team_id, s, st),
+            season, season_type, num_games,
+        )
         if gamelog.empty:
             logger.warning(f"No game log data for team {team_id}, season {season}")
             raise ValueError("Empty game log")
@@ -396,11 +433,16 @@ def get_player_advanced_stats(player_id, season, season_type):
 def get_player_fatigue_metrics(player_id, season, season_type, num_games=10):
     """Get fatigue metrics for a player."""
     try:
-        gamelog = fetch_game_log(player_id, season, season_type)
-        recent = gamelog.head(num_games).copy()
+        gamelog = overflow_game_log(
+            lambda s, st: fetch_game_log(player_id, s, st),
+            season, season_type, num_games,
+        )
+        recent = gamelog.head(num_games)
         avg_min = recent['MIN'].mean() if not recent.empty else 30.0
-        recent['GAME_DATE'] = pd.to_datetime(recent['GAME_DATE'], format='mixed', errors='coerce')
-        rest_days = recent['GAME_DATE'].diff().dt.days.dropna().mean() if not recent.empty and len(recent) > 1 else 2.0
+        # Rows are newest first, so diff against the next (older) row. Gaps are
+        # measured within a season only -- the offseason is not rest.
+        gaps = recent.groupby('SEASON')['_game_dt'].diff(-1).dt.days.dropna() if not recent.empty else pd.Series(dtype=float)
+        rest_days = gaps.mean() if not gaps.empty else 2.0
         logger.debug(f"Fatigue metrics for {player_id}: AVG_MIN={avg_min}, AVG_REST_DAYS={rest_days}")
         return {'AVG_MIN': avg_min, 'AVG_REST_DAYS': rest_days}
     except Exception as e:

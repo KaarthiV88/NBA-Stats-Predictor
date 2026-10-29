@@ -8,7 +8,9 @@ NBA player prop markets with model-generated projections. Search a player, build
 
 ## How it works
 
-A gradient-boosted ensemble trains per request on two seasons of game logs, then projects a stat line against a specific opponent. Model confidence becomes an implied price: if the model likes the over at 77%, OVER quotes 77¢ and UNDER 23¢.
+A gradient-boosted ensemble trains per request on two seasons of game logs (2025-26 and 2026-27), then projects a stat line against a specific opponent. Model confidence becomes an implied price: if the model likes the over at 77%, OVER quotes 77¢ and UNDER 23¢.
+
+Early in a season, when the current log is thin, season averages, last-10 form, rest/minutes load and opponent recent form overflow into last season's most recent games until they reach a usable sample (20 games for season averages, 10 for recent windows).
 
 **Features the model uses:** recency-weighted stat history (30-day half-life), opponent defensive strength normalized to league average, head-to-head history, home/away, rest days, minutes load, usage rate, true shooting, and EMA trend.
 
@@ -102,7 +104,8 @@ Run on a machine with a residential connection. Takes roughly 30 minutes for 530
 ```bash
 cd backend && source venv/bin/activate
 
-python build_snapshot.py                # resumable — skips files already on disk
+python build_snapshot.py --refresh-current   # routine in-season update (newest season only)
+python build_snapshot.py                # resumable — fills in missing files/seasons only
 python build_snapshot.py --force        # rebuild everything
 python build_snapshot.py --ids 201939   # one player, for testing
 python build_snapshot.py --workers 1    # gentler on the API
@@ -119,7 +122,29 @@ The builder backs off globally when the API starts rate-limiting, and writes ato
 | 0–14 days | 27 | 77.3 |
 | 30+ days | 26 | 58.8 |
 
-Refresh at least every two weeks; weekly in-season.
+Refresh at least every two weeks. `--refresh-current` refetches only the newest season (about half the calls of `--force`), and an interrupted refresh resumes where it stopped when re-run.
+
+### Automatic daily refresh
+
+A launchd job on the Mac refreshes, validates and pushes the data every day; Vercel redeploys from the push.
+
+```bash
+scripts/install_refresh_schedule.sh            # daily at 10:00 (or: ... 7 30 for 07:30)
+scripts/install_refresh_schedule.sh --run-now  # trigger a run immediately
+scripts/install_refresh_schedule.sh --uninstall
+tail -f ~/Library/Logs/kv-money-market-refresh.log
+```
+
+Each run (`scripts/refresh_snapshot.sh`):
+
+1. **Checks it is safe to commit:** on `main`, no unpushed commits, no uncommitted changes in `backend/` outside `data/`. Otherwise it skips and says why.
+2. **Builds** with `--refresh-current`, retrying after a cool-down if the API throttles. An incomplete build stays on disk and the next run resumes it.
+3. **Validates** with `validate_snapshot.py --smoke`: every file has exactly the configured seasons and the expected columns, no log lost games versus HEAD, the player count didn't collapse, league tables are populated, the newest game date didn't move backwards, and one real prediction runs end to end offline. A failed build is discarded, never shipped.
+4. **Commits only `backend/data`** and pushes. If the push fails, the commit is undone and the next run retries.
+
+Every outcome is posted as a macOS notification and written to the log. When anything fails, the site keeps serving the last good snapshot. The UI's **Data through** figure (from `/api/data-status`) shows the date of the newest game in the deployed data.
+
+The Mac has to be on, and awake at some point, for a run to happen. A run missed during sleep starts on wake. Because the repo is under `~/Documents`, macOS may block the job the first time; grant `/bin/bash` Full Disk Access (System Settings → Privacy & Security) if the log shows `Operation not permitted`.
 
 ---
 
@@ -128,6 +153,7 @@ Refresh at least every two weeks; weekly in-season.
 | Endpoint | Network needed | Notes |
 | --- | --- | --- |
 | `GET /` | no | Health + data mode |
+| `GET /api/data-status` | no | Snapshot build time and newest game date |
 | `GET /api/teams` | no | Bundled in `nba_api` |
 | `GET /api/all-players` | no | Bundled in `nba_api` |
 | `GET /api/player-details/<name>` | yes\* | Bio, team color |

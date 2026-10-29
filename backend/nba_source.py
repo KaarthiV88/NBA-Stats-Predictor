@@ -224,6 +224,22 @@ def team_game_log(team_id, season, season_type):
     ).get_data_frames()[0]
 
 
+# --- Snapshot summary ----------------------------------------------------
+
+def snapshot_latest_game_date(snapshot_dir=None):
+    """Newest game in the snapshot's team logs as YYYY-MM-DD, or None if empty.
+
+    Recorded in meta.json at build time so the app can show how current its
+    data is, and so a refresh can be rejected if it would move that backwards.
+    """
+    dates = []
+    for path in Path(snapshot_dir or SNAPSHOT_DIR).joinpath('team_gamelogs').glob('*.json'):
+        for rows in (_read_json(path) or {}).values():
+            dates.extend(row.get('GAME_DATE') for row in rows)
+    parsed = pd.to_datetime(pd.Series(dates, dtype=object), format='mixed', errors='coerce').dropna()
+    return parsed.max().strftime('%Y-%m-%d') if not parsed.empty else None
+
+
 # --- Introspection -------------------------------------------------------
 
 def describe():

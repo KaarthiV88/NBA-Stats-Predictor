@@ -85,6 +85,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [savedCount, setSavedCount] = useState(readSavedCount);
   const [toast, setToast] = useState(null);
+  const [dataThrough, setDataThrough] = useState(null);
 
   const showToast = useCallback((message, tone = 'success') => {
     setToast({ message, tone });
@@ -155,6 +156,20 @@ function App() {
   useEffect(() => {
     loadReferenceData();
   }, [loadReferenceData]);
+
+  // How current the backend's data snapshot is. Purely informational, so a
+  // failure just leaves the figure blank.
+  useEffect(() => {
+    fetch(apiUrl('/api/data-status'), { mode: 'cors' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(status => {
+        const date = status && status.latest_game_date;
+        if (date) {
+          setDataThrough(new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch player details when selectedPlayer changes
   useEffect(() => {
@@ -329,7 +344,7 @@ function App() {
               <h1 className="page-title">Player Prop Markets</h1>
               <p className="page-subtitle">
                 Price any NBA player prop against the book. The model trains on the
-                2024-25 and 2025-26 seasons and quotes both sides in cents.
+                2025-26 and 2026-27 seasons and quotes both sides in cents.
               </p>
             </div>
             <div className="page-header-stats">
@@ -344,6 +359,10 @@ function App() {
               <div className="header-stat">
                 <span className="label-micro">Positions</span>
                 <span className="header-stat-value num">{savedCount}</span>
+              </div>
+              <div className="header-stat">
+                <span className="label-micro">Data through</span>
+                <span className="header-stat-value num">{dataThrough || '--'}</span>
               </div>
             </div>
           </header>

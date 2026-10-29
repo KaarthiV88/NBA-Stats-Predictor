@@ -3,9 +3,14 @@ libomp.dylib
 
 # Local-only tooling and caches
 build_snapshot.py
+validate_snapshot.py
 PP_AI.py
 bet_cache/
 __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Scheduled-refresh state (see scripts/refresh_snapshot.sh)
+.snapshot_refresh
+.refresh.lock/
