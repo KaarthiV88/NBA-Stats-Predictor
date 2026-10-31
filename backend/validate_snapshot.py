@@ -149,15 +149,21 @@ def check_meta():
 
 
 def smoke_test():
-    """Train and predict for the player with the most current-season games."""
+    """Train and predict for the player with the most current-season games.
+
+    Before the new season's first game, that falls back to the player with the
+    most games last season.
+    """
     from predictive_model import AdvancedNBAPlayerPredictor
 
-    best = None
+    previous_regular = nba_source.season_key(SEASONS[0], 'Regular Season')
+    best, best_rank = None, (0, 0)
     for path in (OUT / 'gamelogs').glob('*.json'):
         blob = load(path) or {}
-        rows = blob.get(CURRENT_REGULAR) or blob.get(nba_source.season_key(SEASONS[0], 'Regular Season'), [])
-        if rows and (best is None or len(rows) > len(best[1])):
-            best = (int(path.stem), rows)
+        current, previous = blob.get(CURRENT_REGULAR, []), blob.get(previous_regular, [])
+        rank = (len(current), len(previous))
+        if rank > best_rank:
+            best, best_rank = (int(path.stem), current or previous), rank
     if not check(best is not None, 'smoke test: no player has any regular-season games'):
         return
     player_id, rows = best

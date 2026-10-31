@@ -41,8 +41,19 @@ cache = Memory(location=CACHE_DIR, verbose=0)
 # Clearing on startup keeps stats fresh across restarts. Skip it when the cache
 # is meant to persist (e.g. a warm serverless instance being reused), since
 # wiping it on every cold start defeats the point of caching at all.
-if os.environ.get('BET_CACHE_PERSIST', '').lower() not in ('1', 'true', 'yes'):
-    cache.clear()
+#
+# Only the first process clears it. joblib's worker processes re-import this
+# module, and a dozen of them wiping the same directory at once race each other:
+# one crashes on a file another just deleted, which surfaces as an intermittent
+# "BrokenProcessPool: A task has failed to un-serialize". The environment
+# variable is inherited by those workers, so they skip the clear.
+if (os.environ.get('BET_CACHE_PERSIST', '').lower() not in ('1', 'true', 'yes')
+        and not os.environ.get('_BET_CACHE_CLEARED')):
+    os.environ['_BET_CACHE_CLEARED'] = '1'
+    try:
+        cache.clear()
+    except OSError as exc:  # a stale cache is harmless; failing to import is not
+        logger.warning("Could not clear cache at %s: %s", CACHE_DIR, exc)
 
 # NBA Team Primary Colors (official team colors)
 TEAM_COLORS = {

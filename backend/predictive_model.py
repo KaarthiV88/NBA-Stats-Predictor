@@ -213,7 +213,9 @@ class AdvancedNBAPlayerPredictor:
             games = all_games[mask].sort_values('GAME_DATE')
             return {stat: (games.index, self.compute_h2h_features(games, stat)) for stat in self.stat_categories}
 
-        h2h_results = Parallel(n_jobs=-1)(delayed(compute_h2h_opp)(opp) for opp in all_games['OPPONENT'].unique())
+        # A plain loop: this is a few prefix sums per opponent, far cheaper than
+        # starting worker processes for it.
+        h2h_results = [compute_h2h_opp(opp) for opp in all_games['OPPONENT'].unique()]
         h2h_avgs = {stat: pd.Series(0.0, index=all_games.index) for stat in self.stat_categories}
         for result in h2h_results:
             if result is not None:
